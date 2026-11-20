@@ -1,0 +1,494 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>C3 S.Port Telemetry Multitool &amp; OLED Studio</title>
+<style>
+  :root {
+    --bg: #0b1017;
+    --panel: #131c27;
+    --panel-2: #192433;
+    --text: #e6edf5;
+    --muted: #8fa2b8;
+    --accent: #38bdf8;
+    --accent-2: #22c55e;
+    --warn: #f59e0b;
+    --danger: #ef4444;
+    --border: #263649;
+    --font: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  }
+  body[data-theme="A1"] {
+    --bg: #07110b; --panel: #0d1d14; --panel-2: #12281b;
+    --text: #b7ffcf; --muted: #67a87e; --accent: #39ff7a;
+    --accent-2: #a3e635; --warn: #facc15; --danger: #ff4d4d; --border: #1e422b;
+  }
+  body[data-theme="A2"] {
+    --bg: #0b1220; --panel: #121d33; --panel-2: #182744;
+    --text: #eef4ff; --muted: #8fa6cc; --accent: #60a5fa;
+    --accent-2: #34d399; --warn: #fbbf24; --danger: #f87171; --border: #25385c;
+  }
+  body[data-theme="A3"] {
+    --bg: #12110e; --panel: #1c1a15; --panel-2: #26231c;
+    --text: #f7f2e4; --muted: #b5aa90; --accent: #eab308;
+    --accent-2: #38bdf8; --warn: #f97316; --danger: #ef4444; --border: #3d3729;
+  }
+  body[data-theme="B"] {
+    --bg: #12090c; --panel: #1f1015; --panel-2: #2b151d;
+    --text: #fff1f4; --muted: #c29aa5; --accent: #ff2a55;
+    --accent-2: #fb7185; --warn: #f59e0b; --danger: #ef4444; --border: #47202d;
+  }
+  body[data-theme="C"] {
+    --bg: #06151c; --panel: #0c222d; --panel-2: #12303f;
+    --text: #e0f7fa; --muted: #7cb3c2; --accent: #00e5ff;
+    --accent-2: #2dd4bf; --warn: #fbbf24; --danger: #fb7185; --border: #1b495e;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font);
+    font-size: 13px;
+  }
+  header {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 16px;
+    background: var(--panel);
+    border-bottom: 1px solid var(--border);
+  }
+  .brand { font-weight: 700; font-size: 15px; color: var(--accent); }
+  .controls, .tabs { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  button, select, input {
+    background: var(--panel-2);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 6px 10px;
+    font-family: inherit;
+    font-size: 12px;
+  }
+  button { cursor: pointer; }
+  button.active { border-color: var(--accent); background: rgba(56, 189, 248, 0.14); color: var(--accent); font-weight: 700; }
+  main { padding: 14px 16px; max-width: 1440px; margin: 0 auto; }
+  .tab-panel { display: none; }
+  .tab-panel.active { display: block; }
+  .grid-2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 12px; }
+  .grid-4 { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; margin-bottom: 12px; }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px;
+  }
+  .card h3 { margin: 0 0 8px 0; font-size: 12px; text-transform: uppercase; color: var(--muted); letter-spacing: 0.05em; }
+  .metric-val { font-size: 22px; font-weight: 700; color: var(--accent); }
+  .metric-sub { font-size: 11px; color: var(--muted); margin-top: 2px; }
+  .bar-wrap { height: 10px; background: var(--panel-2); border-radius: 5px; overflow: hidden; margin-top: 8px; border: 1px solid var(--border); }
+  .bar-fill { height: 100%; background: var(--accent-2); width: 0%; transition: width 80ms linear; }
+  canvas { width: 100%; border-radius: 6px; background: var(--panel-2); border: 1px solid var(--border); display: block; }
+  .oled-box { display: flex; flex-direction: column; align-items: center; gap: 10px; }
+  #oledCanvas { width: 384px; max-width: 100%; height: auto; image-rendering: pixelated; background: #000; border: 2px solid var(--border); }
+  .row { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 8px; }
+  .log-box { max-height: 220px; overflow: auto; font-size: 11px; background: var(--panel-2); padding: 8px; border-radius: 6px; border: 1px solid var(--border); }
+</style>
+</head>
+<body data-theme="A1">
+<header>
+  <div class="brand">C3 S.PORT TELEMETRY MULTITOOL</div>
+  <div class="tabs" id="mainTabs">
+    <button class="active" data-tab="hud">1. Live HUD</button>
+    <button data-tab="edf">2. EDF / Drivetrain</button>
+    <button data-tab="diag">3. Bus &amp; Logger</button>
+    <button data-tab="settings">4. Settings &amp; OLED</button>
+  </div>
+  <div class="controls">
+    <button id="simBtn" class="active">Sim S.Port: ON</button>
+    <button id="wsBtn">WS: Sim Mode</button>
+    <button id="resetBtn">Reset Peaks</button>
+  </div>
+</header>
+
+<main>
+  <section id="tab-hud" class="tab-panel active">
+    <div class="grid-4" id="kpiStrip"></div>
+    <div class="grid-2">
+      <div class="card">
+        <h3>Artificial Horizon &amp; Flight Vector</h3>
+        <canvas id="horizonCanvas" width="520" height="240"></canvas>
+      </div>
+      <div class="card oled-box">
+        <h3>Live 128×64 OLED Mirror</h3>
+        <canvas id="oledCanvas" width="128" height="64"></canvas>
+        <div class="controls">
+          <button class="preset-btn active" data-preset="0">Preset 1: Info</button>
+          <button class="preset-btn" data-preset="1">Preset 2: EDF</button>
+          <button class="preset-btn" data-preset="2">Preset 3: Debug</button>
+        </div>
+      </div>
+    </div>
+    <div class="grid-2" style="margin-top:12px;">
+      <div class="card">
+        <h3>Voltage (V) &amp; Current (A) History</h3>
+        <canvas id="powerChart" width="520" height="170"></canvas>
+      </div>
+      <div class="card">
+        <h3>Altitude (m) &amp; Speed (km/h) History</h3>
+        <canvas id="navChart" width="520" height="170"></canvas>
+      </div>
+    </div>
+  </section>
+
+  <section id="tab-edf" class="tab-panel">
+    <div class="grid-4">
+      <div class="card"><h3>Electrical Power</h3><div class="metric-val" id="edfPower">0 W</div><div class="metric-sub" id="edfPeakPower">Peak: 0 W</div></div>
+      <div class="card"><h3>Motor / EDF RPM</h3><div class="metric-val" id="edfRpm">0</div><div class="metric-sub" id="edfCellSag">Cell: 0.00 V</div></div>
+      <div class="card"><h3>ESC Temp</h3><div class="metric-val" id="edfEscTemp">0 °C</div><div class="bar-wrap"><div class="bar-fill" id="escTempBar"></div></div></div>
+      <div class="card"><h3>Consumed Capacity</h3><div class="metric-val" id="edfMah">0 mAh</div><div class="metric-sub" id="edfMinVolt">Min Pack: 0.00 V</div></div>
+    </div>
+    <div class="card">
+      <h3>Drivetrain Load &amp; RPM Trace</h3>
+      <canvas id="edfChart" width="1080" height="210"></canvas>
+    </div>
+  </section>
+
+  <section id="tab-diag" class="tab-panel">
+    <div class="grid-4">
+      <div class="card"><h3>Packet Rate</h3><div class="metric-val" id="diagFps">0 /s</div><div class="metric-sub" id="diagProto">FrSky S.Port</div></div>
+      <div class="card"><h3>CRC Errors</h3><div class="metric-val" id="diagCrc">0</div><div class="metric-sub">Checksum integrity</div></div>
+      <div class="card"><h3>Last AppID</h3><div class="metric-val" id="diagApp">0x0000</div><div class="metric-sub" id="diagPhys">PhysID: 0x00</div></div>
+      <div class="card"><h3>Logged Samples</h3><div class="metric-val" id="logCount">0</div><div class="metric-sub"><button id="exportCsvBtn">Download CSV</button></div></div>
+    </div>
+    <div class="card">
+      <h3>Live Telemetry Stream Log</h3>
+      <div class="log-box" id="logBox"></div>
+    </div>
+  </section>
+
+  <section id="tab-settings" class="tab-panel">
+    <div class="grid-2">
+      <div class="card">
+        <h3>Web Cockpit Theme &amp; Protocol</h3>
+        <div class="row">
+          <label>Cockpit Theme:</label>
+          <select id="themeSelect">
+            <option value="A1">A1 - Fighter Jet HUD</option>
+            <option value="A2">A2 - Airliner PFD</option>
+            <option value="A3">A3 - GA / G1000</option>
+            <option value="B">B - Modern Car Cluster</option>
+            <option value="C">C - Marine Helm</option>
+          </select>
+        </div>
+        <div class="row">
+          <label>Telemetry Protocol:</label>
+          <select id="protoSelect">
+            <option value="0">FrSky S.Port (Active)</option>
+            <option value="1">MSP - Betaflight / INAV (Hook Ready)</option>
+            <option value="2">MAVLink (Hook Ready)</option>
+            <option value="3">CRSF / ELRS (Hook Ready)</option>
+            <option value="4">Jeti EX (Hook Ready)</option>
+          </select>
+        </div>
+        <div class="row">
+          <label>LiPo Cell Count:</label>
+          <select id="cellsSelect">
+            <option value="0">Auto-Detect (1S-12S)</option>
+            <option value="3">3S</option><option value="4">4S</option><option value="6">6S</option><option value="12">12S (VFAS1+VFAS2)</option>
+          </select>
+        </div>
+      </div>
+      <div class="card">
+        <h3>OLED Layout Slots (Preset 1)</h3>
+        <div class="row"><label>Top-Left Slot:</label><select class="oled-slot" data-slot="0"></select></div>
+        <div class="row"><label>Top-Right Slot:</label><select class="oled-slot" data-slot="1"></select></div>
+        <div class="row"><label>Bottom-Left Slot:</label><select class="oled-slot" data-slot="2"></select></div>
+        <div class="row"><label>Bottom-Right Slot:</label><select class="oled-slot" data-slot="3"></select></div>
+        <button id="saveCfgBtn" class="active">Apply &amp; Save to C3</button>
+      </div>
+    </div>
+  </section>
+</main>
+
+<script>
+const METRICS = ["VOLT","CELL","CURR","PWR","MAH","RPM","TEMP","ALT","SPD","RSSI"];
+const state = {
+  sim: true, ws: null, preset: 0, theme: "A1",
+  oledSlots: ["VOLT", "CURR", "ALT", "SPD"],
+  logs: [],
+  hist: { volt: [], curr: [], alt: [], spd: [], rpm: [], pwr: [] },
+  d: {
+    vfas1: 16.2, vfas2: 0.0, volt: 16.2, cellV: 4.05, cells: 4, minV: 15.6,
+    curr: 22.4, peakI: 48.0, pwr: 362.9, peakW: 760, mah: 420,
+    rpm: 24500, escT: 46, alt: 85, spd: 92, roll: 6, pitch: 2, hdg: 145, rssi: 91,
+    fps: 42, crcErr: 0, lastApp: 0x0210, lastPhy: 0x02, proto: "FrSky S.Port"
+  }
+};
+
+document.querySelectorAll(".oled-slot").forEach((sel, idx) => {
+  sel.innerHTML = METRICS.map(m => `<option value="${m}">${m}</option>`).join("");
+  sel.value = state.oledSlots[idx];
+});
+
+document.querySelectorAll("#mainTabs button").forEach(btn => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll("#mainTabs button").forEach(b => b.classList.remove("active"));
+    document.querySelectorAll(".tab-panel").forEach(p => p.classList.remove("active"));
+    btn.classList.add("active");
+    document.getElementById("tab-" + btn.dataset.tab).classList.add("active");
+  });
+});
+
+document.querySelectorAll(".preset-btn").forEach(btn => {
+  btn.addEventListener("click", () => {
+    state.preset = Number(btn.dataset.preset);
+    document.querySelectorAll(".preset-btn").forEach(b => b.classList.toggle("active", Number(b.dataset.preset) === state.preset));
+    sendWs({ cmd: "setConfig", preset: state.preset });
+  });
+});
+
+document.getElementById("simBtn").addEventListener("click", (e) => {
+  state.sim = !state.sim;
+  e.target.textContent = "Sim S.Port: " + (state.sim ? "ON" : "OFF");
+  e.target.classList.toggle("active", state.sim);
+});
+
+document.getElementById("wsBtn").addEventListener("click", (e) => {
+  if (state.ws && state.ws.readyState === WebSocket.OPEN) {
+    state.ws.close();
+    return;
+  }
+  const url = `ws://${location.hostname || "192.168.4.1"}/ws`;
+  const socket = new WebSocket(url);
+  socket.onopen = () => { state.sim = false; e.target.textContent = "WS: Connected"; e.target.classList.add("active"); };
+  socket.onclose = () => { e.target.textContent = "WS: Sim Mode"; e.target.classList.remove("active"); };
+  socket.onmessage = (ev) => {
+    const msg = JSON.parse(ev.data);
+    if (msg.type === "telem") Object.assign(state.d, msg);
+  };
+  state.ws = socket;
+});
+
+document.getElementById("saveCfgBtn").addEventListener("click", () => {
+  state.theme = document.getElementById("themeSelect").value;
+  document.body.dataset.theme = state.theme;
+  state.oledSlots = Array.from(document.querySelectorAll(".oled-slot")).map(s => s.value);
+  sendWs({
+    cmd: "setConfig",
+    theme: state.theme,
+    protocol: Number(document.getElementById("protoSelect").value),
+    cells: Number(document.getElementById("cellsSelect").value),
+    oledSlots: state.oledSlots
+  });
+});
+
+document.getElementById("resetBtn").addEventListener("click", () => {
+  state.d.minV = state.d.volt; state.d.peakI = state.d.curr; state.d.peakW = state.d.pwr; state.d.mah = 0;
+  sendWs({ cmd: "resetPeaks" });
+});
+
+document.getElementById("exportCsvBtn").addEventListener("click", () => {
+  const header = "time_ms,volt,cellV,curr,pwr,mah,rpm,escT,alt,spd,rssi\n";
+  const rows = state.logs.map(r => `${r.t},${r.volt.toFixed(2)},${r.cellV.toFixed(2)},${r.curr.toFixed(1)},${r.pwr.toFixed(1)},${r.mah.toFixed(0)},${r.rpm.toFixed(0)},${r.escT.toFixed(0)},${r.alt.toFixed(1)},${r.spd.toFixed(1)},${r.rssi}`).join("\n");
+  const blob = new Blob([header + rows], { type: "text/csv" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "sport_telemetry_log.csv";
+  a.click();
+});
+
+function sendWs(obj) {
+  if (state.ws && state.ws.readyState === WebSocket.OPEN) {
+    state.ws.send(JSON.stringify(obj));
+  }
+}
+
+let tPhase = 0;
+function stepSim() {
+  tPhase += 0.08;
+  const throttle = 0.55 + 0.35 * Math.sin(tPhase * 0.6);
+  const d = state.d;
+  d.curr = +(8 + throttle * 42 + Math.sin(tPhase * 2.1) * 2.5).toFixed(1);
+  d.volt = +(16.6 - (d.curr / 50) * 1.35 + Math.cos(tPhase * 0.4) * 0.08).toFixed(2);
+  d.cellV = +(d.volt / d.cells).toFixed(2);
+  d.pwr = +(d.volt * d.curr).toFixed(1);
+  d.mah = +(d.mah + (d.curr * 1000) / (3600 * 12)).toFixed(1);
+  d.rpm = Math.round(12000 + throttle * 27500);
+  d.escT = Math.round(42 + throttle * 26 + Math.sin(tPhase * 0.2) * 2);
+  d.alt = Math.round(80 + Math.sin(tPhase * 0.35) * 45);
+  d.spd = Math.round(65 + throttle * 75);
+  d.roll = +(Math.sin(tPhase * 0.9) * 18).toFixed(1);
+  d.pitch = +(Math.cos(tPhase * 0.7) * 9).toFixed(1);
+  d.rssi = Math.round(89 + Math.sin(tPhase * 0.5) * 5);
+  d.minV = Math.min(d.minV, d.volt);
+  d.peakI = Math.max(d.peakI, d.curr);
+  d.peakW = Math.max(d.peakW, d.pwr);
+  const appCycle = [0x0210, 0x0200, 0x0500, 0x0400, 0x0100, 0x0830];
+  d.lastApp = appCycle[Math.floor(tPhase * 3) % appCycle.length];
+}
+
+function pushHistory(d) {
+  const maxLen = 80;
+  for (const [k, v] of [["volt", d.volt], ["curr", d.curr], ["alt", d.alt], ["spd", d.spd], ["rpm", d.rpm / 1000], ["pwr", d.pwr]]) {
+    state.hist[k].push(v);
+    if (state.hist[k].length > maxLen) state.hist[k].shift();
+  }
+  state.logs.push({ t: Date.now(), ...d });
+  if (state.logs.length > 500) state.logs.shift();
+}
+
+function drawLineChart(canvas, seriesList) {
+  const ctx = canvas.getContext("2d");
+  const w = canvas.width, h = canvas.height;
+  ctx.clearRect(0, 0, w, h);
+  ctx.strokeStyle = "rgba(148,163,184,0.16)";
+  for (let y = 20; y < h; y += 35) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke(); }
+
+  seriesList.forEach(s => {
+    const arr = s.data;
+    if (!arr.length) return;
+    const min = Math.min(...arr, s.min ?? 0);
+    const max = Math.max(...arr, s.max ?? 1);
+    const span = Math.max(1e-5, max - min);
+    ctx.strokeStyle = s.color;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    arr.forEach((val, i) => {
+      const x = (i / Math.max(1, arr.length - 1)) * (w - 16) + 8;
+      const y = h - 12 - ((val - min) / span) * (h - 24);
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+  });
+}
+
+function drawHorizon(d) {
+  const c = document.getElementById("horizonCanvas");
+  const ctx = c.getContext("2d");
+  const w = c.width, h = c.height;
+  ctx.clearRect(0, 0, w, h);
+
+  ctx.save();
+  ctx.translate(w / 2, h / 2 + d.pitch * 2.2);
+  ctx.rotate((d.roll * Math.PI) / 180);
+  ctx.strokeStyle = getComputedStyle(document.body).getPropertyValue("--accent").trim();
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(-160, 0); ctx.lineTo(160, 0);
+  ctx.stroke();
+  ctx.restore();
+
+  ctx.strokeStyle = getComputedStyle(document.body).getPropertyValue("--text").trim();
+  ctx.lineWidth = 2;
+  ctx.strokeRect(w / 2 - 22, h / 2 - 4, 44, 8);
+
+  ctx.fillStyle = getComputedStyle(document.body).getPropertyValue("--text").trim();
+  ctx.font = "bold 16px monospace";
+  ctx.fillText(`SPD ${d.spd} km/h`, 16, 30);
+  ctx.fillText(`ALT ${d.alt} m`, w - 125, 30);
+  ctx.font = "12px monospace";
+  ctx.fillText(`ROLL ${d.roll}°  PITCH ${d.pitch}°`, 16, h - 16);
+}
+
+function drawOled(d) {
+  const c = document.getElementById("oledCanvas");
+  const ctx = c.getContext("2d");
+  ctx.fillStyle = "#000";
+  ctx.fillRect(0, 0, 128, 64);
+  ctx.fillStyle = "#fff";
+  ctx.strokeStyle = "#fff";
+  ctx.font = "9px monospace";
+
+  const valFor = (k) => ({
+    VOLT: `${d.volt.toFixed(1)}V`, CELL: `${d.cellV.toFixed(2)}V`, CURR: `${d.curr.toFixed(1)}A`,
+    PWR: `${Math.round(d.pwr)}W`, MAH: `${Math.round(d.mah)}mAh`, RPM: `${Math.round(d.rpm)}`,
+    TEMP: `${Math.round(d.escT)}C`, ALT: `${Math.round(d.alt)}m`, SPD: `${Math.round(d.spd)}kmh`, RSSI: `${d.rssi}dB`
+  }[k] || "--");
+
+  if (state.preset === 0) {
+    ctx.fillText(`${d.volt.toFixed(1)}V (${d.cellV.toFixed(2)}V)`, 2, 9);
+    ctx.fillText(`R:${d.rssi}`, 98, 9);
+    ctx.beginPath(); ctx.moveTo(0, 12); ctx.lineTo(128, 12); ctx.stroke();
+    state.oledSlots.forEach((k, i) => {
+      const x = (i % 2) * 64 + 3;
+      const y = Math.floor(i / 2) * 24 + 23;
+      ctx.fillText(k, x, y);
+      ctx.fillText(valFor(k), x, y + 11);
+    });
+  } else if (state.preset === 1) {
+    ctx.fillText(`EDF ${d.cells}S  ${Math.round(d.pwr)}W`, 2, 9);
+    ctx.fillText(`I:${d.curr.toFixed(1)}A  V:${d.volt.toFixed(1)}V`, 2, 22);
+    ctx.fillText(`RPM:${Math.round(d.rpm)}  MIN:${d.minV.toFixed(1)}V`, 2, 35);
+    ctx.fillText(`ESC ${Math.round(d.escT)}C`, 2, 54);
+    ctx.strokeRect(42, 46, 82, 10);
+    ctx.fillRect(44, 48, Math.max(0, Math.min(78, Math.round(((d.escT - 20) / 80) * 78))), 6);
+  } else {
+    ctx.fillText(`${d.proto}`, 2, 9);
+    ctx.fillText(`FPS:${d.fps} ERR:${d.crcErr}`, 2, 22);
+    ctx.fillText(`APP:0x${d.lastApp.toString(16).toUpperCase().padStart(4, "0")}`, 2, 35);
+    ctx.fillText(`SAMPLES:${state.logs.length}`, 2, 52);
+  }
+}
+
+function renderUi() {
+  const d = state.d;
+  document.getElementById("kpiStrip").innerHTML = [
+    ["Pack Voltage", `${d.volt.toFixed(2)} V`, `${d.cells}S • ${d.cellV.toFixed(2)} V/cell`],
+    ["Current / Power", `${d.curr.toFixed(1)} A`, `${Math.round(d.pwr)} W • ${Math.round(d.mah)} mAh`],
+    ["Speed / Alt", `${d.spd} km/h`, `Alt: ${d.alt} m`],
+    ["Link & RPM", `${d.rssi} dB`, `RPM: ${Math.round(d.rpm)} • ESC ${d.escT}°C`]
+  ].map(([t, v, s]) => `<div class="card"><h3>${t}</h3><div class="metric-val">${v}</div><div class="metric-sub">${s}</div></div>`).join("");
+
+  document.getElementById("edfPower").textContent = `${Math.round(d.pwr)} W`;
+  document.getElementById("edfPeakPower").textContent = `Peak: ${Math.round(d.peakW)} W`;
+  document.getElementById("edfRpm").textContent = `${Math.round(d.rpm)}`;
+  document.getElementById("edfCellSag").textContent = `Cell: ${d.cellV.toFixed(2)} V`;
+  document.getElementById("edfEscTemp").textContent = `${Math.round(d.escT)} °C`;
+  document.getElementById("escTempBar").style.width = `${Math.max(0, Math.min(100, (d.escT - 20) * 1.25))}%`;
+  document.getElementById("edfMah").textContent = `${Math.round(d.mah)} mAh`;
+  document.getElementById("edfMinVolt").textContent = `Min Pack: ${d.minV.toFixed(2)} V`;
+
+  document.getElementById("diagFps").textContent = `${d.fps} /s`;
+  document.getElementById("diagProto").textContent = d.proto;
+  document.getElementById("diagCrc").textContent = `${d.crcErr}`;
+  document.getElementById("diagApp").textContent = `0x${d.lastApp.toString(16).toUpperCase().padStart(4, "0")}`;
+  document.getElementById("diagPhys").textContent = `PhysID: 0x${d.lastPhy.toString(16).toUpperCase().padStart(2, "0")}`;
+  document.getElementById("logCount").textContent = `${state.logs.length}`;
+
+  const lastLog = state.logs[state.logs.length - 1];
+  if (lastLog) {
+    const box = document.getElementById("logBox");
+    const line = document.createElement("div");
+    line.textContent = `V=${lastLog.volt.toFixed(2)}V I=${lastLog.curr.toFixed(1)}A P=${Math.round(lastLog.pwr)}W RPM=${Math.round(lastLog.rpm)} T=${Math.round(lastLog.escT)}C ALT=${lastLog.alt}m SPD=${lastLog.spd}km/h`;
+    box.prepend(line);
+    while (box.children.length > 60) box.removeChild(box.lastChild);
+  }
+
+  drawHorizon(d);
+  drawOled(d);
+  drawLineChart(document.getElementById("powerChart"), [
+    { data: state.hist.volt, color: "#22c55e", min: 10, max: 26 },
+    { data: state.hist.curr, color: "#38bdf8", min: 0, max: 70 }
+  ]);
+  drawLineChart(document.getElementById("navChart"), [
+    { data: state.hist.alt, color: "#f59e0b", min: 0, max: 200 },
+    { data: state.hist.spd, color: "#a855f7", min: 0, max: 180 }
+  ]);
+  drawLineChart(document.getElementById("edfChart"), [
+    { data: state.hist.pwr, color: "#ef4444", min: 0, max: 1200 },
+    { data: state.hist.rpm, color: "#38bdf8", min: 0, max: 45 }
+  ]);
+}
+
+setInterval(() => {
+  if (state.sim) stepSim();
+  pushHistory(state.d);
+  renderUi();
+}, 120);
+</script>
+</body>
+</html>
