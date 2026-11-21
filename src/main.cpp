@@ -12,7 +12,7 @@
 #include "SportParser.h"
 #include "FutureParsers.h"
 
-#define FW_VERSION "2.0.0"
+#define FW_VERSION "2.1.0"
 
 #ifdef BOARD_LOLIN_C3_PICO
 constexpr int PIN_OLED_SDA = 8;
@@ -83,6 +83,7 @@ void saveConfig() {
     prefs.putBool("invY", config.invYaw);
     prefs.putUChar("busMode", config.busMode);
     prefs.putUChar("gpsUnit", config.gpsUnit);
+    prefs.putUChar("attSmooth", config.attSmooth);
     prefs.end();
 }
 
@@ -108,6 +109,8 @@ void loadConfig() {
     if (config.busMode > 2) config.busMode = 0;
     config.gpsUnit  = prefs.getUChar("gpsUnit", 0);
     if (config.gpsUnit > 1) config.gpsUnit = 0;
+    config.attSmooth = prefs.getUChar("attSmooth", 70);
+    if (config.attSmooth > 95) config.attSmooth = 70;
     prefs.end();
 
     if ((uint8_t)config.oledPreset >= OLED_PRESET_COUNT) {
@@ -222,6 +225,7 @@ void pushConfig(AsyncWebSocketClient* client) {
     doc["invYaw"] = config.invYaw;
     doc["busMode"] = config.busMode;
     doc["gpsUnit"] = config.gpsUnit;
+    doc["attSmooth"] = config.attSmooth;
     doc["heap"] = ESP.getFreeHeap();
     doc["uptime"] = millis() / 1000;
 
@@ -242,8 +246,6 @@ void pushTelemetryWs() {
     doc["type"] = "telem";
     doc["ver"] = FW_VERSION;
     doc["proto"] = activeParser->name();
-    doc["preset"] = (uint8_t)config.oledPreset;
-    doc["theme"] = config.webTheme;
 
     doc["volt"] = telem.totalVoltage;
     doc["cellV"] = telem.cellVoltage;
@@ -354,6 +356,9 @@ void handleWsMessage(AsyncWebSocketClient* client, void* arg, uint8_t* data, siz
         if (doc["gpsUnit"].is<int>()) {
             int u = doc["gpsUnit"].as<int>();
             if (u >= 0 && u <= 1) config.gpsUnit = (uint8_t)u;
+        }
+        if (doc["attSmooth"].is<int>()) {
+            config.attSmooth = (uint8_t)constrain(doc["attSmooth"].as<int>(), 0, 95);
         }
         saveConfig();
         pushConfig(nullptr);  // keep every connected client in sync
@@ -469,6 +474,7 @@ void loop() {
                 config.oledPreset =
                     (OledPreset)(((uint8_t)config.oledPreset + 1) % OLED_PRESET_COUNT);
                 saveConfig();
+                pushConfig(nullptr);  // keep every open dashboard in sync
             }
         }
         pressStartMs = 0;

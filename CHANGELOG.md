@@ -2,6 +2,40 @@
 
 All notable changes to this project are documented here.
 
+## [2.1.0] — “Field Kit”
+
+### Added
+
+- **GPS / Map tab** (tab 4): offline live track plot with home point (auto-set at the
+  first fix, manual re-anchor), breadcrumb trail, distance rings, north-up / track-up,
+  scale bar, and readouts for position, distance/bearing from home, GPS vs baro
+  altitude, ground speed and course.
+- **GPX export** in the browser logger; `lat`/`lon`/`gpsAlt` columns added to CSV.
+- **GPS KPI card** on the Live HUD (coordinates + distance from home).
+- **Attitude smoothing** setting (0–95 %), persisted on the ESP32 and applied to the
+  artificial horizon.
+- README: openXsensor DMP attitude update guide (INT pin, offset calibration,
+  optional HMC5883 yaw) and an attitude reference/limits section.
+
+### Changed
+
+- **Bench master polling** now runs in a dedicated FreeRTOS task at a fixed 10 ms
+  cadence and uses an adaptive rotation (fast-poll sensors that answer, periodic
+  discovery of the other physical IDs). Bench frame rate rises from 6–9 FPS to
+  receiver-level rates (~60+ FPS); the AUTO listen window is 100 ms per 2 s and is
+  skipped entirely in forced bench mode.
+- S.Port RX buffer enlarged to 512 bytes for headroom during OLED/WS stalls.
+
+### Fixed
+
+- **Theme/preset snap-back**: `theme` and `preset` are no longer part of the 15 Hz
+  telemetry frame (they travel only in the config broadcast), so selecting another
+  theme no longer reverts to the saved one; BOOT-button preset changes now broadcast
+  to every connected dashboard.
+- GPS position is now actually displayed (position was decoded but never shown).
+- Satellite count no longer implies a fake value in the GPS readouts (oXs does not
+  transmit it on S.Port).
+
 ## [2.0.0] — 2026-11-21 — “Cockpit Edition”
 
 ### Added

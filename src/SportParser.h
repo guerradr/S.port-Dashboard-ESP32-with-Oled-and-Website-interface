@@ -1,5 +1,7 @@
 #pragma once
 #include "ProtocolParser.h"
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
 
 // ---------------------------------------------------------------------------
 // FrSky S.Port parser (openXsensor compatible)
@@ -11,9 +13,10 @@
 //   0x0800/0x0820 GPS lat/lon, 0x0830 speed, 0x0840 course, 0x0850 altitude,
 //   0xF101 receiver RSSI.
 //
-// Also implements *bench master mode*: when no receiver is present (AUTO) or
-// when forced (BENCH), the ESP32 becomes the S.Port bus master and polls
-// sensors itself using the standard FrSky physical-ID rotation.
+// Bench master mode (v2.1): the ESP32 polls the bus from a dedicated FreeRTOS
+// task (10 ms cadence, immune to OLED/WebSocket stalls) with an adaptive
+// rotation that fast-polls sensors that recently answered and only probes the
+// remaining physical IDs for discovery.
 // ---------------------------------------------------------------------------
 
 static constexpr uint8_t SPORT_START_STOP = 0x7E;
@@ -41,8 +44,6 @@ static constexpr uint16_t APPID_GPS_ALT     = 0x0850;
 static constexpr uint16_t APPID_RSSI        = 0xF101;
 
 // Physical sensor IDs polled by FrSky receivers (source: openXsensor docs).
-// The master walks this list round-robin so every standard S.Port sensor on
-// the bench is invited to answer.
 static const uint8_t SPORT_POLL_IDS[] = {
     0x00, 0xA1, 0x22, 0x83, 0xE4, 0x45, 0xC6, 0x67, 0x48, 0xE9, 0x6A,
     0xCB, 0xAC, 0x0D, 0x8E, 0x2F, 0xD0, 0x71, 0xF2, 0x53, 0x34, 0x95,
@@ -50,11 +51,13 @@ static const uint8_t SPORT_POLL_IDS[] = {
 static constexpr uint8_t SPORT_POLL_ID_COUNT =
     sizeof(SPORT_POLL_IDS) / sizeof(SPORT_POLL_IDS[0]);
 
-static constexpr unsigned long SPORT_POLL_SPACING_MS = 10;
-static constexpr unsigned long SPORT_AUTO_SILENCE_MS = 2000;
-static constexpr unsigned long SPORT_AUTO_CYCLE_MS   = 1200;
-static constexpr unsigned long SPORT_AUTO_LISTEN_MS  = 200;
-static constexpr unsigned long SPORT_STALE_ATT_MS    = 2000;
+static constexpr unsigned long SPORT_POLL_SPACING_MS   = 10;
+static constexpr unsigned long SPORT_AUTO_SILENCE_MS   = 2000;
+static constexpr unsigned long SPORT_AUTO_CYCLE_MS     = 2000;
+static constexpr unsigned long SPORT_AUTO_LISTEN_MS    = 100;
+static constexpr unsigned long SPORT_ACTIVE_WINDOW_MS  = 5000;
+static constexpr uint16_t SPORT_DISCOVERY_EVERY        = 100;  // ~1 s at 10 ms
+static constexpr size_t SPORT_RX_BUFFER                = 512;
 
 class SportParser : public ProtocolParser {
 private:
@@ -66,15 +69,20 @@ private:
     uint32_t _fpsCounter = 0;
     unsigned long _lastFpsTime = 0;
 
-    // ---- Bus master state ------------------------------------------------
-    BusMode _busMode = BusMode::AUTO;
-    bool _masterActive = false;
-    uint8_t _pollIdx = 0;
-    unsigned long _nextPollMs = 0;
-    unsigned long _lastRxByteMs = 0;
+    // ---- Bus master state (shared with the poll task) --------------------
+    volatile BusMode _busMode = BusMode::AUTO;
+    volatile bool _masterActive = false;
+    volatile bool _pollEnabled = false;
+    volatile uint32_t _pollsSent = 0;
+    volatile unsigned long _idLastSeen[SPORT_POLL_ID_COUNT] = {};
+    volatile unsigned long _lastRxByteMs = 0;
     unsigned long _masterRunStart = 0;
     unsigned long _listenStart = 0;
     bool _inListenWindow = false;
+    bool _taskStarted = false;
+    uint16_t _pollCounter = 0;
+    uint8_t _activeIdx = 0;
+    uint8_t _discoveryIdx = 0;
 
     bool checkCrc(const uint8_t* packet) {
         uint16_t crc = 0;
@@ -86,13 +94,24 @@ private:
         return ((0xFF - crc) == packet[8]);
     }
 
-    static uint32_t nowMs() { return millis(); }
+    void notePhysId(uint8_t id) {
+        for (uint8_t i = 0; i < SPORT_POLL_ID_COUNT; i++) {
+            if (SPORT_POLL_IDS[i] == id) {
+                _idLastSeen[i] = millis();
+                return;
+            }
+        }
+    }
+
+    bool idActive(uint8_t idx, unsigned long now) const {
+        return _idLastSeen[idx] && (now - _idLastSeen[idx]) < SPORT_ACTIVE_WINDOW_MS;
+    }
 
     void decodePayload(uint8_t physId, uint16_t appId, int32_t val, TelemetryData& d) {
         d.lastPhysId = physId;
         d.lastAppId = appId;
         d.lastRawValue = (uint32_t)val;
-        d.lastPacketMs = nowMs();
+        d.lastPacketMs = millis();
         d.framesDecoded++;
 
         uint16_t baseId = appId & 0xFFF0;
@@ -133,40 +152,40 @@ private:
             if (id + 1 < MAX_CELLS) d.cellV[id + 1] = c2;
             if (count > 0 && count <= MAX_CELLS) d.cellCount = count;
             d.cellsValid = true;
-            d.cellsLastMs = nowMs();
+            d.cellsLastMs = millis();
             d.activeSensorMask |= (1 << 10);
         } else if (appId == APPID_ACCX) {
             d.accRaw[0] = val;
-            d.accLastMs[0] = nowMs();
+            d.accLastMs[0] = millis();
             d.activeSensorMask |= (1 << 9);
         } else if (appId == APPID_ACCY) {
             d.accRaw[1] = val;
-            d.accLastMs[1] = nowMs();
+            d.accLastMs[1] = millis();
             d.activeSensorMask |= (1 << 9);
         } else if (appId == APPID_ACCZ) {
             d.accRaw[2] = val;
-            d.accLastMs[2] = nowMs();
+            d.accLastMs[2] = millis();
             d.activeSensorMask |= (1 << 9);
         } else if (baseId == APPID_GPS_LAT) {
             uint32_t raw = (uint32_t)val;
             float lat = (float)(raw & 0x3FFFFFFF) / 600000.0f;
             if (raw & 0x40000000) lat = -lat;
             d.gpsLat = lat;
-            d.gpsPosLastMs = nowMs();
+            d.gpsPosLastMs = millis();
             d.activeSensorMask |= (1 << 11);
         } else if (baseId == APPID_GPS_LON) {
             uint32_t raw = (uint32_t)val;
             float lon = (float)(raw & 0x3FFFFFFF) / 600000.0f;
             if (raw & 0x40000000) lon = -lon;
             d.gpsLon = lon;
-            d.gpsPosLastMs = nowMs();
+            d.gpsPosLastMs = millis();
             d.activeSensorMask |= (1 << 11);
         } else if (baseId == APPID_GPS_SPEED) {
             d.speedRaw = (float)(uint32_t)val;
             d.activeSensorMask |= (1 << 7);
         } else if (baseId == APPID_GPS_COURSE) {
             d.heading = val / 100.0f;
-            d.hdgGpsMs = nowMs();
+            d.hdgGpsMs = millis();
             d.activeSensorMask |= (1 << 7);
         } else if (baseId == APPID_GPS_ALT) {
             d.gpsAlt = val / 100.0f;
@@ -206,6 +225,7 @@ private:
                                               ((uint32_t)_buf[5] << 8) |
                                               ((uint32_t)_buf[6] << 16) |
                                               ((uint32_t)_buf[7] << 24));
+                    notePhysId(_buf[0]);
                     decodePayload(_buf[0], appId, value, data);
                     data.validPackets++;
                     _fpsCounter++;
@@ -216,9 +236,56 @@ private:
         }
     }
 
+    // ---- Poll scheduling (runs in its own FreeRTOS task) ------------------
+    void sendNextPoll() {
+        if (!_port) return;
+        unsigned long now = millis();
+
+        uint8_t active = 0;
+        for (uint8_t i = 0; i < SPORT_POLL_ID_COUNT; i++) {
+            if (idActive(i, now)) active++;
+        }
+
+        uint8_t id;
+        if (active == 0) {
+            // Nothing known on the bus: full discovery rotation.
+            id = SPORT_POLL_IDS[_discoveryIdx % SPORT_POLL_ID_COUNT];
+            _discoveryIdx++;
+        } else if ((_pollCounter++ % SPORT_DISCOVERY_EVERY) == 0) {
+            // Periodic single probe outside the known responders.
+            id = SPORT_POLL_IDS[_discoveryIdx % SPORT_POLL_ID_COUNT];
+            _discoveryIdx++;
+        } else {
+            // Fast rotation over the sensors that actually answer.
+            uint8_t guard = 0;
+            uint8_t cand = 0;
+            do {
+                cand = _activeIdx % SPORT_POLL_ID_COUNT;
+                _activeIdx++;
+            } while (!idActive(cand, now) && ++guard <= SPORT_POLL_ID_COUNT);
+            id = SPORT_POLL_IDS[cand];
+        }
+
+        _port->write(SPORT_START_STOP);
+        _port->write(id);
+        _pollsSent++;
+    }
+
+    static void pollTaskThunk(void* arg) {
+        static_cast<SportParser*>(arg)->pollTaskLoop();
+    }
+
+    void pollTaskLoop() {
+        for (;;) {
+            vTaskDelay(pdMS_TO_TICKS(SPORT_POLL_SPACING_MS));
+            if (_masterActive && _pollEnabled) sendNextPoll();
+        }
+    }
+
     void serviceMaster(unsigned long now, TelemetryData& d) {
         if (_busMode == BusMode::RX_ONLY) {
             _masterActive = false;
+            _pollEnabled = false;
             _inListenWindow = false;
             d.busMasterActive = false;
             return;
@@ -227,6 +294,7 @@ private:
         if (_busMode == BusMode::AUTO) {
             if (!_masterActive &&
                 (now - _lastRxByteMs) < SPORT_AUTO_SILENCE_MS) {
+                _pollEnabled = false;
                 d.busMasterActive = false;
                 return;
             }
@@ -236,24 +304,28 @@ private:
             _masterActive = true;
             _masterRunStart = now;
             _listenStart = now;
-            _nextPollMs = now;
-            _pollIdx = 0;
             _inListenWindow = false;
+            _pollCounter = 0;
+            _activeIdx = 0;
+            _discoveryIdx = 0;
         }
         d.busMasterActive = true;
 
         if (_busMode == BusMode::AUTO) {
             unsigned long cyclePos = (now - _masterRunStart) % SPORT_AUTO_CYCLE_MS;
-            bool listenPhase = cyclePos >= (SPORT_AUTO_CYCLE_MS - SPORT_AUTO_LISTEN_MS);
+            bool listenPhase =
+                cyclePos >= (SPORT_AUTO_CYCLE_MS - SPORT_AUTO_LISTEN_MS);
             if (listenPhase) {
                 if (!_inListenWindow) {
                     _inListenWindow = true;
                     _listenStart = now;
                 }
+                _pollEnabled = false;
                 // A real receiver polls continuously; hearing anything while
                 // we are not transmitting means someone else owns the bus.
                 if (_lastRxByteMs > (_listenStart + 5)) {
                     _masterActive = false;
+                    _pollEnabled = false;
                     _inListenWindow = false;
                     d.busMasterActive = false;
                     _lastRxByteMs = now;
@@ -264,14 +336,7 @@ private:
             _inListenWindow = false;
         }
 
-        if (now >= _nextPollMs) {
-            _nextPollMs = now + SPORT_POLL_SPACING_MS;
-            uint8_t id = SPORT_POLL_IDS[_pollIdx % SPORT_POLL_ID_COUNT];
-            _pollIdx++;
-            _port->write(SPORT_START_STOP);
-            _port->write(id);
-            d.pollsSent++;
-        }
+        _pollEnabled = true;
     }
 
 public:
@@ -281,6 +346,7 @@ public:
         _busMode = mode;
         if (mode == BusMode::RX_ONLY) {
             _masterActive = false;
+            _pollEnabled = false;
             _inListenWindow = false;
         }
     }
@@ -290,6 +356,7 @@ public:
 
     void begin(HardwareSerial& serial, int rxPin, int txPin) override {
         _port = &serial;
+        _port->setRxBufferSize(SPORT_RX_BUFFER);
         _port->begin(57600, SERIAL_8N1, rxPin, txPin);
         _port->setRxInvert(true);
         _port->setTxInvert(true);
@@ -299,7 +366,22 @@ public:
         _lastFpsTime = millis();
         _lastRxByteMs = millis();
         _masterActive = false;
+        _pollEnabled = false;
         _inListenWindow = false;
+        _pollsSent = 0;
+        for (uint8_t i = 0; i < SPORT_POLL_ID_COUNT; i++) _idLastSeen[i] = 0;
+
+        if (!_taskStarted) {
+            _taskStarted = true;
+            xTaskCreate(pollTaskThunk, "sportPoll", 3072, this, 6, nullptr);
+        }
+    }
+
+    void end(HardwareSerial& serial) override {
+        _masterActive = false;
+        _pollEnabled = false;
+        _inListenWindow = false;
+        serial.end();
     }
 
     void update(TelemetryData& data) override {
@@ -314,6 +396,7 @@ public:
         }
 
         serviceMaster(now, data);
+        data.pollsSent = _pollsSent;
 
         if (now - _lastFpsTime >= 1000) {
             data.packetsPerSec = _fpsCounter;

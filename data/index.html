@@ -143,7 +143,9 @@
   }
   .card h3 .r { margin-left: auto; font-weight: 600; text-transform: none; letter-spacing: 0; font-size: 10px; }
   .metric-val { font-family: var(--mono); font-variant-numeric: tabular-nums; font-size: 22px; font-weight: 700; color: var(--accent); line-height: 1.15; }
+  .metric-val.coord { font-size: 15px; letter-spacing: 0; }
   .metric-sub { font-size: 11.5px; color: var(--muted); margin-top: 3px; font-family: var(--mono); }
+  .card h3 .r button { padding: 3px 8px; font-size: 10.5px; }
   .badge {
     display: inline-block; font-size: 9.5px; font-weight: 700; letter-spacing: .08em;
     padding: 2px 7px; border-radius: 999px; border: 1px solid var(--border);
@@ -238,7 +240,8 @@
     <button class="active" data-tab="hud" role="tab">1 · Live HUD</button>
     <button data-tab="edf" role="tab">2 · EDF / Drivetrain</button>
     <button data-tab="diag" role="tab">3 · Bus &amp; Logger</button>
-    <button data-tab="settings" role="tab">4 · Settings</button>
+    <button data-tab="gps" role="tab">4 · GPS / Map</button>
+    <button data-tab="settings" role="tab">5 · Settings</button>
   </div>
   <div class="controls">
     <button id="demoBtn" class="active" title="Simulated flight data">DEMO: ON</button>
@@ -256,6 +259,7 @@
       <div class="card"><h3>Link &amp; Bus</h3><div class="metric-val" id="kpiLinkVal">0 dB</div><div class="metric-sub" id="kpiLinkSub">--</div></div>
       <div class="card"><h3>Drivetrain</h3><div class="metric-val" id="kpiEngVal">0 RPM</div><div class="metric-sub" id="kpiEngSub">--</div></div>
       <div class="card"><h3>Attitude</h3><div class="metric-val" id="kpiAttVal">0° / 0°</div><div class="metric-sub" id="kpiAttSub">--</div></div>
+      <div class="card"><h3>GPS / Home</h3><div class="metric-val coord" id="kpiGpsVal">NO FIX</div><div class="metric-sub" id="kpiGpsSub">--</div></div>
     </div>
 
     <div class="grid cols-2">
@@ -332,6 +336,7 @@
         </select>
         <button id="exportCsvBtn">Download CSV</button>
         <button id="exportJsonBtn">Download JSON</button>
+        <button id="exportGpxBtn">Download GPX</button>
       </div>
       <div class="hint" style="color:var(--muted);font-size:11px;margin-top:8px;">
         Logging runs in your browser (max 20 000 rows, ~30–60 min at 5 Hz). CSV contains epoch + ISO timestamps.
@@ -340,6 +345,30 @@
     <div class="card">
       <h3>Live Telemetry Stream</h3>
       <div class="log-box" id="logBox"></div>
+    </div>
+  </section>
+
+  <!-- ================= GPS / MAP ================= -->
+  <section id="tab-gps" class="tab-panel">
+    <div class="grid kpis">
+      <div class="card"><h3>Position</h3><div class="metric-val coord" id="gpsPosVal">--</div><div class="metric-sub" id="gpsPosSub">waiting for fix</div></div>
+      <div class="card"><h3>Distance / Bearing</h3><div class="metric-val" id="gpsDistVal">--</div><div class="metric-sub" id="gpsDistSub">from home</div></div>
+      <div class="card"><h3>Altitude</h3><div class="metric-val" id="gpsAltVal">--</div><div class="metric-sub" id="gpsAltSub">GPS vs baro</div></div>
+      <div class="card"><h3>Ground Speed / Course</h3><div class="metric-val" id="gpsSpdVal">--</div><div class="metric-sub" id="gpsSpdSub">--</div></div>
+    </div>
+    <div class="card">
+      <h3>Live GPS Track
+        <span class="r">
+          <button id="mapModeBtn" class="active" title="Toggle north-up / track-up">NORTH-UP</button>
+          <button id="setHomeBtn">Set home here</button>
+          <button id="clearTrailBtn" class="danger">Clear trail</button>
+        </span>
+      </h3>
+      <canvas id="gpsCanvas" height="460" aria-label="GPS track plot"></canvas>
+      <div class="hint" style="color:var(--muted);font-size:11px;margin-top:8px;">
+        Offline track plot — no internet required. Home is set automatically at the first 3D fix (or press “Set home here”).
+        The trail is kept in this browser tab only.
+      </div>
     </div>
   </section>
 
@@ -427,6 +456,11 @@
         <div class="checkline"><input type="checkbox" id="invPitch"><label for="invPitch">Invert pitch sign</label></div>
         <div class="checkline"><input type="checkbox" id="invRoll"><label for="invRoll">Invert roll sign</label></div>
         <div class="checkline"><input type="checkbox" id="invYaw"><label for="invYaw">Invert yaw sign</label></div>
+        <div class="row" style="margin-top:6px;">
+          <label for="attSmooth">Attitude smoothing</label>
+          <span><input type="range" id="attSmooth" min="0" max="95" step="5" value="70" style="width:110px;vertical-align:middle;accent-color:var(--accent);">
+          <span id="attSmoothVal" class="mono">70 %</span></span>
+        </div>
         <div class="hint" style="color:var(--muted);font-size:11px;margin-top:6px;">
           Default matches the recommended oXs setup: <span class="mono">#define ACCX_SOURCE PITCH</span>,
           <span class="mono">ACCY_SOURCE ROLL</span>, <span class="mono">ACCZ_SOURCE YAW</span> (0.1° units).
@@ -447,7 +481,7 @@
 </main>
 
 <footer>
-  <span>FW <b id="footVer">v2.0.0</b></span>
+  <span>FW <b id="footVer">v2.1.0</b></span>
   <span>AP <b id="footIp">192.168.4.1</b></span>
   <span>Uptime <b id="footUp">--</b></span>
   <span>Heap <b id="footHeap">--</b></span>
@@ -474,12 +508,13 @@ const state = {
   lastMsg: 0,
   preset: 0,
   theme: "A1",
+  attSmooth: 70,
   oledSlots: ["VOLT", "CURR", "ALT", "SPD"],
   cfg: null,
   status: "connecting",
   logger: { on: false, rows: [], max: 20000, last: 0, interval: 200 },
   d: {
-    ver: "2.0.0", proto: "FrSky S.Port", theme: "A1", preset: 0,
+    ver: "2.1.0", proto: "FrSky S.Port", theme: "A1", preset: 0,
     volt: 0, cellV: 0, cells: 6, minV: 0, cellMin: 0, cellv: null,
     curr: 0, peakI: 0, pwr: 0, peakW: 0, mah: 0, rpm: 0, escT: 0, motT: 0,
     alt: 0, maxAlt: 0, vspd: 0, spd: 0, maxSpd: 0, hdg: 0, roll: 0, pitch: 0,
@@ -539,21 +574,11 @@ function connectWs() {
     if (msg.type === "cfg") {
       applyCfg(msg);
     } else if (msg.type === "telem") {
-      const presetChanged = typeof msg.preset === "number" && msg.preset !== state.preset;
       Object.assign(state.d, msg);
       state.lastMsg = Date.now();
       state.live = true;
       state.demo = false;
       syncDemoButton();
-      if (presetChanged) {
-        state.preset = msg.preset;
-        syncPresetButtons();
-      }
-      if (msg.theme && msg.theme !== state.theme) {
-        state.theme = msg.theme;
-        document.body.dataset.theme = msg.theme;
-        $("#themeSelect").value = msg.theme;
-      }
       if (state.status !== "live") setStatus("live");
     }
   };
@@ -612,6 +637,11 @@ function applyCfg(m) {
   $("#invPitch").checked = !!m.invPitch;
   $("#invRoll").checked = !!m.invRoll;
   $("#invYaw").checked = !!m.invYaw;
+  if (typeof m.attSmooth === "number") {
+    state.attSmooth = m.attSmooth;
+    $("#attSmooth").value = m.attSmooth;
+    $("#attSmoothVal").textContent = m.attSmooth + " %";
+  }
   if (m.ip) {
     $("#fwIp").textContent = m.ip;
     $("#footIp").textContent = m.ip;
@@ -694,6 +724,11 @@ $("#themeSelect").addEventListener("change", (e) => {
   document.body.dataset.theme = state.theme;
 });
 
+$("#attSmooth").addEventListener("input", (e) => {
+  state.attSmooth = Number(e.target.value);
+  $("#attSmoothVal").textContent = state.attSmooth + " %";
+});
+
 $("#saveCfgBtn").addEventListener("click", () => {
   state.theme = $("#themeSelect").value;
   document.body.dataset.theme = state.theme;
@@ -711,7 +746,8 @@ $("#saveCfgBtn").addEventListener("click", () => {
     attMap,
     invPitch: $("#invPitch").checked,
     invRoll: $("#invRoll").checked,
-    invYaw: $("#invYaw").checked
+    invYaw: $("#invYaw").checked,
+    attSmooth: Number($("#attSmooth").value)
   });
   toast(ok ? "Settings saved to ESP32" : "Not connected — apply locally only",
         ok ? "ok" : "warn");
@@ -754,6 +790,7 @@ function logRow(d) {
     curr: d.curr, pwr: d.pwr, mah: d.mah, rpm: d.rpm, escT: d.escT, motT: d.motT,
     alt: d.alt, vspd: d.vspd, spd: d.spd, hdg: d.hdg, roll: d.roll, pitch: d.pitch,
     rssi: d.rssi, fps: d.fps, crc: d.crcErr, cells: d.cells,
+    lat: d.lat, lon: d.lon, gpsAlt: d.gpsAlt,
     attSrc: state.demo ? "SIM" : d.attSrc, hdgSrc: state.demo ? "SIM" : d.hdgSrc
   };
 }
@@ -776,7 +813,7 @@ function csvCell(v) {
 $("#exportCsvBtn").addEventListener("click", () => {
   const cols = ["t", "volt", "cellV", "minV", "cellMin", "curr", "pwr", "mah",
     "rpm", "escT", "motT", "alt", "vspd", "spd", "hdg", "roll", "pitch",
-    "rssi", "fps", "crc", "cells", "attSrc", "hdgSrc"];
+    "rssi", "fps", "crc", "cells", "lat", "lon", "gpsAlt", "attSrc", "hdgSrc"];
   const head = "epoch_ms,iso_time," + cols.filter((c) => c !== "t").join(",");
   const rows = state.logger.rows.map((r) =>
     [r.t, new Date(r.t).toISOString(), ...cols.filter((c) => c !== "t").map((c) => csvCell(r[c]))].join(",")
@@ -787,6 +824,24 @@ $("#exportCsvBtn").addEventListener("click", () => {
 $("#exportJsonBtn").addEventListener("click", () => {
   download("sport_telemetry_log.json", JSON.stringify(state.logger.rows, null, 1),
            "application/json");
+});
+
+$("#exportGpxBtn").addEventListener("click", () => {
+  const pts = state.logger.rows.filter((r) => r.lat || r.lon);
+  if (!pts.length) {
+    toast("No GPS points in the log — start logging near a fix", "warn");
+    return;
+  }
+  let gpx = '<?xml version="1.0" encoding="UTF-8"?>\n';
+  gpx += '<gpx version="1.1" creator="S.Port Multitool" xmlns="http://www.topografix.com/GPX/1/1">\n';
+  gpx += "<trk><name>S.Port flight</name><trkseg>\n";
+  for (const r of pts) {
+    gpx += `<trkpt lat="${r.lat.toFixed(7)}" lon="${r.lon.toFixed(7)}">`;
+    gpx += `<ele>${(Number(r.gpsAlt) || Number(r.alt) || 0).toFixed(1)}</ele>`;
+    gpx += `<time>${new Date(r.t).toISOString()}</time></trkpt>\n`;
+  }
+  gpx += "</trkseg></trk></gpx>\n";
+  download("sport_flight.gpx", gpx, "application/gpx+xml");
 });
 
 function download(name, text, mime) {
@@ -837,8 +892,8 @@ function stepSim(dt) {
   d.sats = 11;
   d.gpsFix = true;
   d.gpsAlt = d.alt + 140;
-  d.lat = 52.5200 + Math.sin(simPhase * 0.01) * 0.0012;
-  d.lon = 13.4050 + Math.cos(simPhase * 0.01) * 0.0012;
+  d.lat = 52.5200 + Math.sin(simPhase * 0.12) * 0.0018;
+  d.lon = 13.4050 + Math.cos(simPhase * 0.12) * 0.0028;
   d.attSrc = "SIM";
   d.hdgSrc = "SIM";
   d.master = false;
@@ -887,11 +942,11 @@ function drawADI(d) {
   const rollIn = attFresh ? d.roll : 0;
   const pitchIn = attFresh ? d.pitch : 0;
   if (!adi.init) { adi.roll = rollIn; adi.pitch = pitchIn; adi.hdg = d.hdg; adi.init = true; }
-  const k = 0.18;
-  adi.roll += (rollIn - adi.roll) * k;
-  adi.pitch += (pitchIn - adi.pitch) * k;
+  const alpha = Math.max(0.05, Math.min(1, 1 - (state.attSmooth ?? 70) / 100));
+  adi.roll += (rollIn - adi.roll) * alpha;
+  adi.pitch += (pitchIn - adi.pitch) * alpha;
   let dh = ((d.hdg - adi.hdg + 540) % 360) - 180;
-  adi.hdg = (adi.hdg + dh * k + 360) % 360;
+  adi.hdg = (adi.hdg + dh * alpha + 360) % 360;
 
   const C = themeColors();
   const style = state.theme === "A1" ? "hud" : "pfd";
@@ -1521,6 +1576,241 @@ charts.edf = new TimeChart($("#edfChart"), [
 ]);
 
 // ===========================================================================
+// GPS / map tab
+// ===========================================================================
+const M_PER_DEG = 111320;
+const gpsState = { home: null, trail: [], mode: "north", lastDraw: 0 };
+
+function gpsFixValid(d) {
+  return !!d.gpsFix && (Math.abs(d.lat || 0) > 0.00005 || Math.abs(d.lon || 0) > 0.00005);
+}
+
+function localXY(lat, lon, home) {
+  return {
+    x: (lon - home.lon) * M_PER_DEG * Math.cos((home.lat * Math.PI) / 180),
+    y: (lat - home.lat) * M_PER_DEG
+  };
+}
+
+function localDistM(lat1, lon1, lat2, lon2) {
+  const dy = (lat2 - lat1) * M_PER_DEG;
+  const dx = (lon2 - lon1) * M_PER_DEG * Math.cos((lat1 * Math.PI) / 180);
+  return Math.hypot(dx, dy);
+}
+
+function gpsDistance(d) {
+  const home = gpsState.home;
+  if (!home) return { dist: 0, brg: 0 };
+  const p = localXY(d.lat, d.lon, home);
+  let brg = (Math.atan2(p.x, p.y) * 180) / Math.PI;
+  if (brg < 0) brg += 360;
+  return { dist: Math.hypot(p.x, p.y), brg };
+}
+
+function fmtDistance(m) {
+  if (m >= 10000) return (m / 1000).toFixed(0) + " km";
+  if (m >= 1000) return (m / 1000).toFixed(2) + " km";
+  return Math.round(m) + " m";
+}
+
+function niceMapRange(m) {
+  const steps = [25, 50, 100, 250, 500, 1000, 2000, 5000, 10000, 20000, 50000];
+  for (const s of steps) if (m <= s) return s;
+  return 50000;
+}
+
+$("#mapModeBtn").addEventListener("click", () => {
+  gpsState.mode = gpsState.mode === "north" ? "track" : "north";
+  const btn = $("#mapModeBtn");
+  btn.textContent = gpsState.mode === "north" ? "NORTH-UP" : "TRACK-UP";
+  btn.classList.toggle("active", gpsState.mode === "north");
+});
+
+$("#setHomeBtn").addEventListener("click", () => {
+  const d = state.d;
+  if (!gpsFixValid(d)) {
+    toast("No GPS fix — cannot set home", "warn");
+    return;
+  }
+  gpsState.home = { lat: d.lat, lon: d.lon };
+  gpsState.trail = [];
+  toast("Home point set", "ok");
+});
+
+$("#clearTrailBtn").addEventListener("click", () => {
+  gpsState.trail = [];
+  toast("Trail cleared");
+});
+
+function updateGpsTab(d) {
+  const fix = gpsFixValid(d);
+  const now = Date.now();
+
+  if (fix) {
+    if (!gpsState.home) {
+      gpsState.home = { lat: d.lat, lon: d.lon };
+      gpsState.trail = [];
+      toast("Home set at first GPS fix", "ok");
+    }
+    const last = gpsState.trail[gpsState.trail.length - 1];
+    if (!last || now - last.t > 2000 || localDistM(last.lat, last.lon, d.lat, d.lon) > 1.5) {
+      gpsState.trail.push({ lat: d.lat, lon: d.lon, t: now });
+      if (gpsState.trail.length > 3000) gpsState.trail.shift();
+    }
+  }
+
+  $("#gpsPosVal").textContent = fix
+    ? `${d.lat.toFixed(5)}, ${d.lon.toFixed(5)}`
+    : "--";
+  $("#gpsPosSub").textContent = fix
+    ? `3D fix • ${d.sats > 0 ? d.sats + " sats" : "no sat count"}`
+    : "waiting for fix";
+
+  const { dist, brg } = gpsDistance(d);
+  $("#gpsDistVal").textContent = fix && gpsState.home ? fmtDistance(dist) : "--";
+  $("#gpsDistSub").textContent =
+    fix && gpsState.home ? `bearing ${Math.round(brg)}° from home` : "from home";
+
+  $("#gpsAltVal").textContent = fix ? `${Math.round(Number(d.gpsAlt) || 0)} m` : "--";
+  $("#gpsAltSub").textContent =
+    `baro ${Math.round(d.alt || 0)} m • VS ${(d.vspd || 0).toFixed(1)} m/s`;
+
+  $("#gpsSpdVal").textContent = `${Math.round(d.spd || 0)} km/h`;
+  $("#gpsSpdSub").textContent =
+    `course ${Math.round(((d.hdg || 0) + 360) % 360)}° • ${state.demo ? "SIM" : (d.hdgSrc || "NONE")}`;
+
+  if (performance.now() - gpsState.lastDraw > 100) {
+    gpsState.lastDraw = performance.now();
+    drawGpsMap(d);
+  }
+}
+
+function drawGpsMap(d) {
+  const cv = $("#gpsCanvas");
+  const ctx = cv.getContext("2d");
+  const dpr = window.devicePixelRatio || 1;
+  const cssW = cv.clientWidth || 800;
+  const cssH = Math.max(300, Math.round(Math.min(cssW * 0.55, 520)));
+  if (cv.width !== Math.round(cssW * dpr) || cv.height !== Math.round(cssH * dpr)) {
+    cv.width = Math.round(cssW * dpr);
+    cv.height = Math.round(cssH * dpr);
+  }
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, cssW, cssH);
+  const W = cssW, H = cssH;
+  const C = themeColors();
+
+  const fix = gpsFixValid(d);
+  const st = gpsState;
+  ctx.font = '600 11px ui-monospace, monospace';
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+
+  if (!st.home) {
+    ctx.fillStyle = C.muted;
+    ctx.fillText(fix ? "Acquiring home…" : "Waiting for GPS fix…", W / 2, H / 2 - 8);
+    if (!fix) {
+      ctx.font = "11px ui-monospace, monospace";
+      ctx.fillText("openXsensor:  #define A_GPS_IS_CONNECTED  YES", W / 2, H / 2 + 16);
+    }
+    return;
+  }
+
+  const home = st.home;
+  const pl = localXY(d.lat, d.lon, home);
+  const headingRad = ((d.hdg || 0) * Math.PI) / 180;
+  const trackUp = st.mode === "track";
+
+  let maxR = 40;
+  for (const p of st.trail) {
+    const q = localXY(p.lat, p.lon, home);
+    maxR = Math.max(maxR, Math.hypot(q.x, q.y));
+  }
+  maxR = Math.max(maxR, Math.hypot(pl.x, pl.y));
+
+  const range = niceMapRange(maxR * 1.2);
+  const pad = 26;
+  const pxPerM = (Math.min(W, H) / 2 - pad) / range;
+  const cx = W / 2, cy = H / 2;
+
+  const cosH = Math.cos(headingRad), sinH = Math.sin(headingRad);
+  const rot = (x, y) => (trackUp ? [x * cosH - y * sinH, x * sinH + y * cosH] : [x, y]);
+  const [px0, py0] = rot(pl.x, pl.y);
+  const scr = (x, y) => {
+    const [rx, ry] = rot(x, y);
+    return [cx + (rx - px0) * pxPerM, cy - (ry - py0) * pxPerM];
+  };
+
+  // distance rings around home
+  const [hx, hy] = scr(0, 0);
+  ctx.strokeStyle = "rgba(148,163,184,0.22)";
+  ctx.setLineDash([4, 5]);
+  ctx.lineWidth = 1;
+  for (const r of [range, range / 2, range / 4]) {
+    ctx.beginPath();
+    ctx.arc(hx, hy, r * pxPerM, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+  ctx.setLineDash([]);
+  ctx.fillStyle = C.muted;
+  ctx.textAlign = "right";
+  ctx.font = "10px ui-monospace, monospace";
+  ctx.fillText("ring " + fmtDistance(range), W - 12, 14);
+
+  // trail
+  if (st.trail.length > 1) {
+    ctx.strokeStyle = C.accent;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    st.trail.forEach((p, i) => {
+      const q = localXY(p.lat, p.lon, home);
+      const [x, y] = scr(q.x, q.y);
+      if (i) ctx.lineTo(x, y); else ctx.moveTo(x, y);
+    });
+    ctx.stroke();
+  }
+
+  // home marker
+  ctx.fillStyle = C.accent2;
+  ctx.beginPath();
+  ctx.arc(hx, hy, 5, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = C.text;
+  ctx.textAlign = "center";
+  ctx.fillText("H", hx, hy - 14);
+
+  // aircraft marker
+  const [ax, ay] = scr(pl.x, pl.y);
+  ctx.save();
+  ctx.translate(ax, ay);
+  ctx.rotate(trackUp ? 0 : headingRad);
+  ctx.fillStyle = C.warn;
+  ctx.beginPath();
+  ctx.moveTo(0, -9);
+  ctx.lineTo(6, 7);
+  ctx.lineTo(0, 3);
+  ctx.lineTo(-6, 7);
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+
+  // scale bar
+  const barM = Math.max(10, range / 4);
+  const barPx = barM * pxPerM;
+  const bx = 16, by = H - 16;
+  ctx.strokeStyle = C.text;
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(bx, by);
+  ctx.lineTo(bx + barPx, by);
+  ctx.stroke();
+  ctx.fillStyle = C.muted;
+  ctx.font = "10px ui-monospace, monospace";
+  ctx.textAlign = "left";
+  ctx.fillText(fmtDistance(barM), bx, by - 9);
+}
+
+// ===========================================================================
 // UI refresh
 // ===========================================================================
 function updateKpis(d) {
@@ -1544,6 +1834,16 @@ function updateKpis(d) {
     `${Math.round(d.roll || 0)}° / ${Math.round(d.pitch || 0)}°`;
   $("#kpiAttSub").textContent =
     `HDG ${Math.round(((d.hdg || 0) + 360) % 360)}° • ${state.demo ? "SIM" : (d.attSrc || "NONE")}`;
+  const hasFix = gpsFixValid(d);
+  if (hasFix) {
+    $("#kpiGpsVal").textContent = `${d.lat.toFixed(4)}, ${d.lon.toFixed(4)}`;
+    $("#kpiGpsSub").textContent = gpsState.home
+      ? `home ${fmtDistance(gpsDistance(d).dist)}`
+      : "home not set";
+  } else {
+    $("#kpiGpsVal").textContent = "NO FIX";
+    $("#kpiGpsSub").textContent = "waiting for GPS";
+  }
 }
 
 function updateEdtTab(d) {
@@ -1625,6 +1925,7 @@ function frame(t) {
   updateKpis(d);
   updateEdtTab(d);
   updateDiagTab(d);
+  updateGpsTab(d);
   updateFooter(d);
   drawADI(d);
 

@@ -1,4 +1,4 @@
-# ESP32 Telemetry Multitool — v2.0.0 “Cockpit Edition”
+# ESP32 Telemetry Multitool — v2.1.0 “Field Kit”
 
 A direct-connect RC telemetry reader, 128×64 OLED HUD and live engineering web
 dashboard for the **ESP-WROOM-32 (`esp32dev`)** (and optionally **LOLIN C3 Pico**)
@@ -12,19 +12,23 @@ bank scale and heading tape.
 
 ---
 
-## What’s new in v2.0.0
+## What’s new in v2.1.0 — “Field Kit”
 
 | Area | Highlights |
 | --- | --- |
-| **Artificial horizon** | Full PFD-style instrument: pitch ladder with degree labels, bank scale ±60° with rolling pointer, fixed aircraft symbol, heading tape, vario chevrons, digital readouts. PFD speed/altitude tapes in theme A2. |
-| **Real attitude data** | Decodes the openXsensor ACC slots `0x0700/0x0710/0x0720` (PITCH / ROLL / YAW, 0.1° units) with configurable mapping and sign inversion. |
-| **FLVSS cells** | Decodes `0x0300` cell frames → real per-cell voltages, lowest cell and true cell count (voltage guess is now only a fallback). |
-| **GPS** | Decodes lat/lon (`0x0800/0x0820`), speed (`0x0830`), course (`0x0840`) and GPS altitude (`0x0850`). |
-| **Bench master mode** | With no receiver connected, the ESP32 becomes the S.Port bus master and polls sensors itself — the multitool works standalone on the bench (auto-detect, or force it). |
-| **OLED** | Redesigned dense layouts (no more dark bands between rows), 4th attitude preset, explicit 400 kHz I²C, 10 fps dirty-flag rendering, and built-in test patterns. |
-| **Web UI** | Auto-connect/reconnect, status LED, stale-data watchdog, two-way config sync, chart axes/legends/hover, logger with CSV/JSON export, toast feedback, theme-aware cockpit styling. |
-| **Server** | mDNS `sport-hud.local`, captive-portal DNS so phones open the dashboard automatically, optional gzip-compressed UI. |
-| **Toolchain** | Migrated to `ESP32Async/ESPAsyncWebServer` v3.6.x + `ESP32Async/AsyncTCP`. |
+| **GPS / Map tab** | Offline live track plot: home auto-set at first fix (+ manual re-anchor), breadcrumb trail, distance rings, north-up/track-up, scale bar, position / distance / bearing / altitude readouts. No internet required. |
+| **GPX export** | Logger exports GPX tracks (plus `lat`/`lon` columns in CSV) for any mapping tool. |
+| **Bench polling speed** | S.Port master polling moved to a FreeRTOS task with adaptive sensor rotation — bench frame rate now matches receiver mode (~60+ FPS instead of 6–9). |
+| **Theme sync fixed** | Theme/preset are no longer echoed in the telemetry stream, so selections no longer snap back; the BOOT button broadcasts preset changes to every open dashboard. |
+| **Attitude smoothing** | Adjustable low-pass (0–95 %) for the artificial horizon, persisted on the ESP32. |
+| **Docs** | openXsensor DMP attitude update guide (incl. INT pin) and an attitude reference/limits section. |
+
+### v2.0.0 highlights (still relevant)
+
+- PFD-style artificial horizon (pitch ladder, ±60° bank scale, heading tape, A2 tapes)
+- openXsensor decode: ACC slots `0x0700/0x0710/0x0720` (pitch/roll/yaw), FLVSS cells, GPS
+- Bench master mode (auto/forced), OLED dense layouts + attitude preset + self-test
+- `ESP32Async/ESPAsyncWebServer` 3.6.x, mDNS, captive portal, gzip UI
 
 See [CHANGELOG.md](CHANGELOG.md) for the full list.
 
@@ -88,6 +92,29 @@ Notes:
 - If you enabled `GPS_SPEED_IN_KMH` in oXs, switch *Settings → GPS speed encoding*.
 - Cell frames are only sent by an oXs that measures cells (`NUMBEROFCELLS > 0`) or by
   a real FrSky FLVSS/MLVSS sensor on the same bus.
+
+### Attitude quality — use the openXsensor DMP build
+
+The attitude shown on the dashboard is computed **by openXsensor**, not by the
+ESP32. Current oXs master derives roll/pitch from the MPU6050 **DMP quaternion**
+(gyro-integrated with gravity correction), which is stable enough for a flight HUD.
+Older oXs builds used a raw accelerometer tilt that swings with any linear
+acceleration. If your horizon reacts to shaking/sliding the *level* board, update
+the oXs:
+
+1. **Wire the MPU6050 `INT` pin to the Pro Mini `D2` or `D3`** (the DMP needs the
+   interrupt line; SDA/SCL/Vcc/GND stay as they are).
+2. Flash the current master from `github.com/openXsensor/openXsensor` with
+   `A_MPU6050_IS_CONNECTED YES`, keeping the ACC mapping above.
+3. Run the accelerometer-offset calibration once (the `DISPLAY_ACC_OFFSET`
+   procedure in `oXs_config_description.h`).
+4. Optional on a GY-86 (HMC5883 present): `CALCULATE_YAW_WITH_HMC5883 YES` after
+   the documented magnetometer calibration, for a real compass heading.
+
+**Limits:** no 6-DOF MEMS AHRS can ignore sustained acceleration. In a long turn the
+horizon leans toward apparent gravity — real aircraft attitude indicators behave the
+same way, only slower. Tune *Settings → Attitude smoothing* to taste; heading prefers
+GPS course while moving and falls back to the IMU yaw.
 
 ---
 
@@ -157,10 +184,13 @@ is absent.
   charts (axes, legends, hover crosshair), KPI strip.
 - **EDF / Drivetrain** — power, RPM, temperatures, consumption and load charts.
 - **Bus & Logger** — packet rate, CRC errors, last app/phys IDs, bus role, attitude
-  source; browser logger (start/stop/rate, CSV + JSON export).
+  source; browser logger (start/stop/rate, CSV + JSON + **GPX** export).
+- **GPS / Map** — offline live track plot: auto home at first fix (+ “Set home here”),
+  breadcrumb trail, distance rings, north-up / track-up, scale bar; position,
+  distance/bearing from home, GPS vs baro altitude, ground speed and course.
 - **Settings** — theme, OLED flip + slot layout, protocol, bus role, cell count,
-  GPS speed encoding, attitude slot mapping + sign inversions, OLED test patterns,
-  apply/save to ESP32.
+  GPS speed encoding, attitude slot mapping + sign inversions + smoothing, OLED test
+  patterns, apply/save to ESP32.
 
 Connection handling: the page connects automatically, reconnects with backoff and
 shows a status LED (`LIVE` / `SIM` / `CONNECTING` / `NO SIGNAL`). **DEMO** mode
@@ -195,26 +225,29 @@ The UI speaks JSON over `ws://<ip>/ws`.
 On connect the ESP32 pushes a **config** frame:
 
 ```json
-{"type":"cfg","ver":"2.0.0","ssid":"SPort-HUD","ip":"192.168.4.1",
+{"type":"cfg","ver":"2.1.0","ssid":"SPort-HUD","ip":"192.168.4.1",
  "theme":"A1","preset":0,"protocol":0,"cells":0,"flipOled":false,
  "oledSlots":["VOLT","CURR","ALT","SPD"],"attMap":[1,2,3],
  "invPitch":false,"invRoll":false,"invYaw":false,
- "busMode":0,"gpsUnit":0,"heap":214000,"uptime":42}
+ "busMode":0,"gpsUnit":0,"attSmooth":70,"heap":214000,"uptime":42}
 ```
+
+Theme and preset travel **only** in this config frame (pushed on connect and after
+every change, including the physical BOOT button) — not in the telemetry stream.
 
 Telemetry is pushed at ~15 Hz:
 
-`type, ver, proto, preset, theme, volt, cellV, cells, minV, cellMin, cellv[], curr,
-peakI, pwr, peakW, mah, rpm, escT, motT, alt, maxAlt, vspd, spd, maxSpd, hdg, roll,
-pitch, lat, lon, gpsAlt, sats, gpsFix, rssi, fps, crcErr, lastApp, lastPhy, attSrc,
-hdgSrc, master, polls, busMode, heap, uptime`
+`type, ver, proto, volt, cellV, cells, minV, cellMin, cellv[], curr, peakI, pwr,
+peakW, mah, rpm, escT, motT, alt, maxAlt, vspd, spd, maxSpd, hdg, roll, pitch, lat,
+lon, gpsAlt, sats, gpsFix, rssi, fps, crcErr, lastApp, lastPhy, attSrc, hdgSrc,
+master, polls, busMode, heap, uptime`
 
 Commands (browser → ESP32):
 
 ```json
 {"cmd":"setConfig","theme":"A2","protocol":0,"cells":0,"gpsUnit":0,"busMode":0,
  "flipOled":false,"oledSlots":["VOLT","CURR","ALT","SPD"],"attMap":[1,2,3],
- "invPitch":false,"invRoll":false,"invYaw":false}
+ "invPitch":false,"invRoll":false,"invYaw":false,"attSmooth":70}
 {"cmd":"resetPeaks"}
 {"cmd":"oledTest","pattern":0}
 {"cmd":"getCfg"}
@@ -231,6 +264,9 @@ Commands (browser → ESP32):
 | Roll/pitch reversed | Settings → Attitude Input → invert roll/pitch |
 | Speed 5.4× too low/high | Settings → GPS speed encoding (knots vs km/h) |
 | RSSI always 0 | No receiver link (bench master) — expected |
+| Bench master only reaches a few FPS | Fixed in v2.1.0 (polling task + adaptive rotation); make sure both firmware and `index.html` are updated |
+| Theme/preset selection snaps back | Fixed in v2.1.0 (theme/preset removed from the 15 Hz telemetry stream); hard-refresh after flashing |
+| GPS tab says “Waiting for GPS fix” | oXs needs `A_GPS_IS_CONNECTED YES` and a 3D fix outdoors; check the Bus & Logger app IDs for `0x0800/0x0820` |
 | Web page won’t open | Connect to `SPort-HUD` first; try `http://192.168.4.1`; the captive portal opens on most phones |
 | UI stale after flashing a new `index.html` | Hard-refresh the browser (page is served `no-store`; the WS reconnects automatically) |
 
@@ -240,8 +276,9 @@ Commands (browser → ESP32):
 
 ```
 platformio.ini          # esp32dev + lolin_c3_pico environments
+scripts/gzip_web.py     # auto-gzip the web UI before buildfs/uploadfs
 src/main.cpp            # Wi-Fi AP, WebSocket, mDNS/DNS, config, OLED loop
-src/SportParser.h       # S.Port decoder + bench master polling
+src/SportParser.h       # S.Port decoder + bench master polling task
 src/TelemetryBus.h      # Data model & enums
 src/OledRenderer.h      # 4 OLED presets + self-test patterns
 src/ProtocolParser.h    # Parser interface (MSP/MAVLink/CRSF/Jeti stubs in FutureParsers.h)

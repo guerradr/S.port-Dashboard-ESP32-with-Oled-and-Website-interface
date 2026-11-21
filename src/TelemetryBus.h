@@ -182,6 +182,7 @@ struct SystemConfig {
 
     uint8_t busMode = (uint8_t)BusMode::AUTO;
     uint8_t gpsUnit = (uint8_t)GpsSpeedUnit::KNOTS;
+    uint8_t attSmooth = 70;  // 0 = raw, 100 = heavily smoothed
 };
 
 // Human readable attitude source for the OLED / web badge.
