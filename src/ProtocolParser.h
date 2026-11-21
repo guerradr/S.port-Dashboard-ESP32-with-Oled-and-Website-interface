@@ -9,4 +9,7 @@ public:
     virtual void begin(HardwareSerial& serial, int rxPin, int txPin) = 0;
     virtual void update(TelemetryData& data) = 0;
     virtual void end(HardwareSerial& serial) { serial.end(); }
+
+    // Only parsers that can act as a bus master override this.
+    virtual void setBusMode(BusMode mode) { (void)mode; }
 };
