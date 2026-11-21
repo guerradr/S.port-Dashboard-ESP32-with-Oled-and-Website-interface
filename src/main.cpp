@@ -10,11 +10,22 @@
 #include "SportParser.h"
 #include "FutureParsers.h"
 
+#ifdef BOARD_LOLIN_C3_PICO
 constexpr int PIN_OLED_SDA = 8;
 constexpr int PIN_OLED_SCL = 10;
 constexpr int PIN_SPORT_RX = 20;
 constexpr int PIN_SPORT_TX = 21;
 constexpr int PIN_BUTTON   = 9;
+#define TELEM_SERIAL Serial1
+#else
+// ESP-WROOM-32 (esp32dev) Default Pinout
+constexpr int PIN_OLED_SDA = 21;
+constexpr int PIN_OLED_SCL = 22;
+constexpr int PIN_SPORT_RX = 16; // Serial2 RX
+constexpr int PIN_SPORT_TX = 17; // Serial2 TX
+constexpr int PIN_BUTTON   = 0;  // BOOT button (active LOW)
+#define TELEM_SERIAL Serial2
+#endif
 
 const char* AP_SSID = "SPort-HUD";
 const char* AP_PASS = "12345678";
@@ -40,7 +51,7 @@ unsigned long lastOledMs = 0;
 unsigned long lastBtnMs = 0;
 
 void selectProtocol(ActiveProtocol proto) {
-    if (activeParser) activeParser->end(Serial1);
+    if (activeParser) activeParser->end(TELEM_SERIAL);
     config.protocol = proto;
     switch (proto) {
         case ActiveProtocol::FRSKY_SPORT: activeParser = &sportParser; break;
@@ -49,7 +60,7 @@ void selectProtocol(ActiveProtocol proto) {
         case ActiveProtocol::CRSF:        activeParser = &crsfParser; break;
         case ActiveProtocol::JETI_EX:     activeParser = &jetiParser; break;
     }
-    activeParser->begin(Serial1, PIN_SPORT_RX, PIN_SPORT_TX);
+    activeParser->begin(TELEM_SERIAL, PIN_SPORT_RX, PIN_SPORT_TX);
 }
 
 void saveConfig() {
