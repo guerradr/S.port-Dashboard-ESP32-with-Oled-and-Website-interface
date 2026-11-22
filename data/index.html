@@ -264,12 +264,12 @@
 
     <div class="grid cols-2">
       <div class="card adi-wrap">
-        <h3>Artificial Horizon <span class="r"><span class="badge" id="attBadge">NONE</span></span></h3>
+        <h3><span id="instTitle">Artificial Horizon</span> <span class="r"><span class="badge" id="attBadge">NONE</span></span></h3>
         <canvas id="adiCanvas" width="440" height="452" aria-label="Artificial horizon"></canvas>
         <div class="adi-readouts">
-          <div class="adi-readout"><div class="lbl">Bank</div><div class="val" id="roVal">0<small>°</small></div></div>
-          <div class="adi-readout"><div class="lbl">Pitch</div><div class="val" id="piVal">0<small>°</small></div></div>
-          <div class="adi-readout"><div class="lbl">Heading <span class="badge" id="hdgBadge">NONE</span></div><div class="val" id="hdVal">0<small>°</small></div></div>
+          <div class="adi-readout"><div class="lbl" id="lblRoll">Bank</div><div class="val" id="roVal">0<small>°</small></div></div>
+          <div class="adi-readout"><div class="lbl" id="lblPitch">Pitch</div><div class="val" id="piVal">0<small>°</small></div></div>
+          <div class="adi-readout"><div class="lbl" id="lblHdg">Heading <span class="badge" id="hdgBadge">NONE</span></div><div class="val" id="hdVal">0<small>°</small></div></div>
         </div>
       </div>
 
@@ -304,7 +304,9 @@
       <div class="card"><h3>EDF / Motor RPM</h3><div class="metric-val" id="edfRpm">0</div><div class="metric-sub" id="edfCellSag">Cell: 0.00 V</div></div>
       <div class="card"><h3>ESC Temperature</h3><div class="metric-val" id="edfEscTemp">0 °C</div><div class="bar-wrap"><div class="bar-fill" id="escTempBar"></div></div></div>
       <div class="card"><h3>Consumed Capacity</h3><div class="metric-val" id="edfMah">0 mAh</div><div class="metric-sub" id="edfMinVolt">Min pack: 0.00 V</div></div>
-      <div class="card"><h3>Motor Temperature</h3><div class="metric-val" id="edfMotorTemp">0 °C</div><div class="metric-sub" id="edfEfficiency">--</div></div>
+      <div class="card"><h3>Motor Temperature</h3><div class="metric-val" id="edfMotorTemp">0 °C</div><div class="metric-sub" id="edfPeakCurrent">Peak: 0 A</div></div>
+      <div class="card"><h3>Voltage Sag</h3><div class="metric-val" id="edfSag">0.00 V</div><div class="metric-sub" id="edfSagSub">cell 0.00 V • rest 0.00 V</div></div>
+      <div class="card"><h3>Internal Resistance</h3><div class="metric-val" id="edfRes">--</div><div class="metric-sub" id="edfResSub">needs cells + current</div></div>
     </div>
     <div class="card">
       <h3>Drivetrain Load &amp; RPM</h3>
@@ -333,6 +335,10 @@
           <option value="200" selected>5 samples / s</option>
           <option value="500">2 samples / s</option>
           <option value="1000">1 sample / s</option>
+        </select>
+        <select id="logCapacity" title="Buffer capacity">
+          <option value="20000" selected>20 000 rows</option>
+          <option value="50000">50 000 rows</option>
         </select>
         <button id="exportCsvBtn">Download CSV</button>
         <button id="exportJsonBtn">Download JSON</button>
@@ -481,7 +487,7 @@
 </main>
 
 <footer>
-  <span>FW <b id="footVer">v2.1.0</b></span>
+  <span>FW <b id="footVer">v2.2.0</b></span>
   <span>AP <b id="footIp">192.168.4.1</b></span>
   <span>Uptime <b id="footUp">--</b></span>
   <span>Heap <b id="footHeap">--</b></span>
@@ -514,13 +520,14 @@ const state = {
   status: "connecting",
   logger: { on: false, rows: [], max: 20000, last: 0, interval: 200 },
   d: {
-    ver: "2.1.0", proto: "FrSky S.Port", theme: "A1", preset: 0,
+    ver: "2.2.0", proto: "FrSky S.Port", theme: "A1", preset: 0,
     volt: 0, cellV: 0, cells: 6, minV: 0, cellMin: 0, cellv: null,
+    sagCell: 0, sagPack: 0, resMohm: 0, restCell: 0,
     curr: 0, peakI: 0, pwr: 0, peakW: 0, mah: 0, rpm: 0, escT: 0, motT: 0,
     alt: 0, maxAlt: 0, vspd: 0, spd: 0, maxSpd: 0, hdg: 0, roll: 0, pitch: 0,
     lat: 0, lon: 0, gpsAlt: 0, sats: 0, gpsFix: false,
     rssi: 0, fps: 0, crcErr: 0, lastApp: 0, lastPhy: 0,
-    attSrc: "NONE", hdgSrc: "NONE", master: false, polls: 0, busMode: 0,
+    attSrc: "NONE", hdgSrc: "NONE", master: false, polls: 0, pollsSec: 0, busMode: 0,
     heap: 0, uptime: 0
   }
 };
@@ -583,6 +590,8 @@ function connectWs() {
     }
   };
   socket.onclose = () => {
+    if (state.ws && state.ws !== socket) return;
+    state.ws = null;
     state.live = false;
     setStatus(state.demo ? "sim" : "lost");
     scheduleReconnect();
@@ -783,6 +792,12 @@ $("#logClearBtn").addEventListener("click", () => {
 $("#logInterval").addEventListener("change", (e) => {
   state.logger.interval = Number(e.target.value);
 });
+$("#logCapacity").addEventListener("change", (e) => {
+  state.logger.max = Number(e.target.value);
+  if (state.logger.rows.length > state.logger.max) {
+    state.logger.rows.splice(0, state.logger.rows.length - state.logger.max);
+  }
+});
 
 function logRow(d) {
   return {
@@ -904,6 +919,11 @@ function stepSim(dt) {
   d.heap = 214000;
   d.validPackets = (d.validPackets || 0) + 1;
   d.lastRaw = ((d.lastRaw || 0) + 2654435761) >>> 0;
+  d.sagCell = +(0.02 + (d.curr / 50) * 0.05).toFixed(3);
+  d.sagPack = +(d.sagCell * d.cells).toFixed(2);
+  d.restCell = +(d.cellV + d.sagCell).toFixed(3);
+  d.resMohm = +((d.sagPack / Math.max(1, d.curr)) * 1000).toFixed(1);
+  d.pollsSec = d.master ? 100 : 0;
 }
 
 // ===========================================================================
@@ -943,25 +963,79 @@ function drawADI(d) {
   const pitchIn = attFresh ? d.pitch : 0;
   if (!adi.init) { adi.roll = rollIn; adi.pitch = pitchIn; adi.hdg = d.hdg; adi.init = true; }
   const alpha = Math.max(0.05, Math.min(1, 1 - (state.attSmooth ?? 70) / 100));
-  adi.roll += (rollIn - adi.roll) * alpha;
+  // Wrap-aware roll smoothing: roll can cross +/-180 deg in inverted flight.
+  const dr = ((rollIn - adi.roll + 540) % 360) - 180;
+  adi.roll = ((((adi.roll + dr * alpha) % 360) + 540) % 360) - 180;
   adi.pitch += (pitchIn - adi.pitch) * alpha;
-  let dh = ((d.hdg - adi.hdg + 540) % 360) - 180;
+  const dh = ((d.hdg - adi.hdg + 540) % 360) - 180;
   adi.hdg = (adi.hdg + dh * alpha + 360) % 360;
 
   const C = themeColors();
-  const style = state.theme === "A1" ? "hud" : "pfd";
-  const showTapes = state.theme === "A2";
+  updateInstrumentChrome();
 
+  switch (state.theme) {
+    case "A1": drawGripen(ctx, W, H, d, C); break;
+    case "A3": drawG1000(ctx, W, H, d, C); break;
+    case "B":  drawCarCluster(ctx, W, H, d, C); break;
+    case "C":  drawMarine(ctx, W, H, d, C); break;
+    case "A2":
+    default:   drawPFD(ctx, W, H, d, C); break;
+  }
+
+  updateAttReadouts(d);
+}
+
+const INSTRUMENT_CHROME = {
+  A1: { title: "Gripen HUD", l1: "Bank", l2: "Pitch" },
+  A2: { title: "Primary Flight Display", l1: "Bank", l2: "Pitch" },
+  A3: { title: "G1000 PFD / HSI", l1: "Bank", l2: "Pitch" },
+  B:  { title: "Vehicle Cluster", l1: "Speed", l2: "Power" },
+  C:  { title: "Marine Console", l1: "Heel", l2: "Pitch" }
+};
+
+function updateInstrumentChrome() {
+  const c = INSTRUMENT_CHROME[state.theme] || INSTRUMENT_CHROME.A2;
+  $("#instTitle").textContent = c.title;
+  $("#lblRoll").textContent = c.l1;
+  $("#lblPitch").textContent = c.l2;
+}
+
+function updateAttReadouts(d) {
+  const hdg = Math.round(((d.hdg + 360) % 360));
+  if (state.theme === "B") {
+    $("#roVal").innerHTML = `${Math.round(d.spd || 0)}<small> km/h</small>`;
+    $("#piVal").innerHTML = `${Math.round(d.pwr || 0)}<small> W</small>`;
+  } else {
+    $("#roVal").innerHTML = `${Math.round(adi.roll)}<small>°</small>`;
+    $("#piVal").innerHTML = `${Math.round(adi.pitch)}<small>°</small>`;
+  }
+  $("#hdVal").innerHTML = `${hdg}<small>°</small>`;
+  const src = state.demo ? "SIM" : (d.attSrc || "NONE");
+  const hsrc = state.demo ? "SIM" : (d.hdgSrc || "NONE");
+  const badge = $("#attBadge");
+  badge.textContent = src;
+  badge.className = "badge " + (src === "OXS" ? "ok" : src === "NONE" ? "err" : "warn");
+  const hbadge = $("#hdgBadge");
+  hbadge.textContent = hsrc;
+  hbadge.className = "badge " + (hsrc === "GPS" ? "ok" : hsrc === "NONE" ? "err" : "warn");
+}
+
+// --- A2: filled PFD with speed / altitude tapes ---------------------------
+function drawPFD(ctx, W, H, d, C) {
   const cx = W / 2;
   const tapeH = 62;
   const cy = tapeH + (H - tapeH) / 2 - 4;
-  const R = showTapes
-    ? Math.min(W * 0.36, (H - tapeH) / 2 - 10)
-    : Math.min(W * 0.455, (H - tapeH) / 2 - 8);
-
+  const R = Math.min(W * 0.36, (H - tapeH) / 2 - 10);
   drawHeadingTape(ctx, W, cx, adi.hdg, C);
+  drawAdiCircle(ctx, cx, cy, R, d, C, { chevrons: true });
+  drawTapes(ctx, W, cx, cy, R, d, C);
+}
 
-  // --- instrument circle ------------------------------------------------
+function drawAdiCircle(ctx, cx, cy, R, d, C, opts = {}) {
+  const rollRad = (adi.roll * Math.PI) / 180;
+  const pxPerDeg = Math.max(3.2, R / 46);
+  const py = adi.pitch * pxPerDeg;
+
   ctx.save();
   ctx.beginPath();
   ctx.arc(cx, cy, R, 0, Math.PI * 2);
@@ -970,36 +1044,25 @@ function drawADI(d) {
   ctx.fill();
   ctx.clip();
 
-  const rollRad = (adi.roll * Math.PI) / 180;
-  const pxPerDeg = Math.max(3.2, R / 46);
-  const py = adi.pitch * pxPerDeg;
-
   ctx.save();
   ctx.translate(cx, cy);
   ctx.rotate(-rollRad);
 
-  if (style === "pfd") {
-    let g = ctx.createLinearGradient(0, py - 2 * R, 0, py);
-    g.addColorStop(0, C.skyTop); g.addColorStop(1, C.skyBot);
-    ctx.fillStyle = g;
-    ctx.fillRect(-2 * R, py - 2 * R, 4 * R, 2 * R);
-    g = ctx.createLinearGradient(0, py, 0, py + 2 * R);
-    g.addColorStop(0, C.gndTop); g.addColorStop(1, C.gndBot);
-    ctx.fillStyle = g;
-    ctx.fillRect(-2 * R, py, 4 * R, 2 * R);
-  } else {
-    ctx.fillStyle = "#03140a";
-    ctx.fillRect(-2 * R, -2 * R, 4 * R, 4 * R);
-  }
+  let g = ctx.createLinearGradient(0, py - 2 * R, 0, py);
+  g.addColorStop(0, C.skyTop); g.addColorStop(1, C.skyBot);
+  ctx.fillStyle = g;
+  ctx.fillRect(-2 * R, py - 2 * R, 4 * R, 2 * R);
+  g = ctx.createLinearGradient(0, py, 0, py + 2 * R);
+  g.addColorStop(0, C.gndTop); g.addColorStop(1, C.gndBot);
+  ctx.fillStyle = g;
+  ctx.fillRect(-2 * R, py, 4 * R, 2 * R);
 
-  // horizon
   ctx.strokeStyle = C.text;
   ctx.lineWidth = 2.5;
   ctx.beginPath();
   ctx.moveTo(-2 * R, py); ctx.lineTo(2 * R, py);
   ctx.stroke();
 
-  // pitch ladder
   ctx.lineWidth = 1.6;
   ctx.font = "600 11px ui-monospace, monospace";
   ctx.textAlign = "center";
@@ -1010,13 +1073,20 @@ function drawADI(d) {
     if (Math.abs(y) > R * 1.7) continue;
     const major = deg % 10 === 0;
     const half = major ? R * 0.40 : R * 0.24;
-    ctx.strokeStyle = style === "hud" ? C.accent : C.text;
-    ctx.globalAlpha = major ? 0.95 : 0.55;
+    ctx.strokeStyle = C.text;
+    ctx.globalAlpha = major ? 0.95 : 0.5;
     ctx.beginPath();
     ctx.moveTo(-half, y); ctx.lineTo(half, y);
     ctx.stroke();
+    if (opts.chevrons && deg < 0) {
+      const tick = 6;
+      ctx.beginPath();
+      ctx.moveTo(-half, y); ctx.lineTo(-half + tick, y - tick);
+      ctx.moveTo(half, y); ctx.lineTo(half - tick, y - tick);
+      ctx.stroke();
+    }
     if (major) {
-      ctx.fillStyle = style === "hud" ? C.accent : C.text;
+      ctx.fillStyle = C.text;
       ctx.fillText(String(Math.abs(deg)), -half - 17, y);
       ctx.fillText(String(Math.abs(deg)), half + 17, y);
     }
@@ -1024,10 +1094,9 @@ function drawADI(d) {
   ctx.globalAlpha = 1;
   ctx.restore();
 
-  // bank scale
-  drawBankScale(ctx, cx, cy, R, adi.roll, C, style);
+  drawBankScale(ctx, cx, cy, R, adi.roll, C, "pfd");
 
-  // vario chevrons (right edge, inside circle)
+  // vario chevrons
   if (d.vspd !== undefined) {
     const steps = Math.max(-3, Math.min(3, Math.round(d.vspd / 1.5)));
     for (let i = 0; i < Math.abs(steps); i++) {
@@ -1049,7 +1118,7 @@ function drawADI(d) {
     }
   }
 
-  // aircraft reference symbol (fixed)
+  // fixed aircraft reference symbol
   ctx.strokeStyle = C.warn;
   ctx.lineWidth = 3;
   ctx.lineCap = "round";
@@ -1064,7 +1133,7 @@ function drawADI(d) {
   ctx.fillStyle = C.warn;
   ctx.fillRect(cx - 3, cy - 3, 6, 6);
 
-  ctx.restore();  // remove clip
+  ctx.restore();
 
   // bezel
   ctx.strokeStyle = C.border;
@@ -1073,22 +1142,536 @@ function drawADI(d) {
   ctx.strokeStyle = C.panel2;
   ctx.lineWidth = 8;
   ctx.beginPath(); ctx.arc(cx, cy, R + 6, 0, Math.PI * 2); ctx.stroke();
-
-  if (showTapes) drawTapes(ctx, W, cx, cy, R, d, C);
-
-  // update DOM readouts
-  $("#roVal").innerHTML = `${Math.round(d.roll)}<small>°</small>`;
-  $("#piVal").innerHTML = `${Math.round(d.pitch)}<small>°</small>`;
-  $("#hdVal").innerHTML = `${Math.round((d.hdg + 360) % 360)}<small>°</small>`;
-  const src = state.demo ? "SIM" : (d.attSrc || "NONE");
-  const hsrc = state.demo ? "SIM" : (d.hdgSrc || "NONE");
-  const badge = $("#attBadge");
-  badge.textContent = src;
-  badge.className = "badge " + (src === "OXS" ? "ok" : src === "NONE" ? "err" : "warn");
-  const hbadge = $("#hdgBadge");
-  hbadge.textContent = hsrc;
-  hbadge.className = "badge " + (hsrc === "GPS" ? "ok" : hsrc === "NONE" ? "err" : "warn");
 }
+
+// --- A1: Gripen-style jet HUD (ported from guerradr/gripen-HUD) -----------
+function drawGripen(ctx, W, H, d, C) {
+  const cx = W / 2, cy = H / 2 + 4;
+  const hud = C.accent;
+  const rollRad = (-adi.roll * Math.PI) / 180;
+  const cosR = Math.cos(rollRad), sinR = Math.sin(rollRad);
+  const pxPerDeg = Math.max(4.5, Math.min(H / 70, 6.5));
+
+  const rotatePt = (x, y) => [
+    cx + (x - cx) * cosR - (y - cy) * sinR,
+    cy + (x - cx) * sinR + (y - cy) * cosR
+  ];
+
+  ctx.fillStyle = "#040807";
+  ctx.fillRect(0, 0, W, H);
+
+  ctx.save();
+  ctx.strokeStyle = hud;
+  ctx.fillStyle = hud;
+  ctx.lineWidth = 1.6;
+  ctx.lineJoin = "round";
+
+  // Gripen hemispherical pitch ladder.
+  for (let deg = -80; deg <= 80; deg += 10) {
+    if (deg === 0) {
+      const y = cy + adi.pitch * pxPerDeg;
+      const gap = 26, span = W * 0.34;
+      const [x1, y1] = rotatePt(cx - span, y);
+      const [x2, y2] = rotatePt(cx - gap, y);
+      const [x3, y3] = rotatePt(cx + gap, y);
+      const [x4, y4] = rotatePt(cx + span, y);
+      ctx.beginPath();
+      ctx.moveTo(x1, y1); ctx.lineTo(x2, y2);
+      ctx.moveTo(x3, y3); ctx.lineTo(x4, y4);
+      ctx.stroke();
+    } else if (deg > 0) {
+      if (Math.abs(deg - adi.pitch) > 45) continue;
+      const zy = cy - (90 - adi.pitch) * pxPerDeg;
+      const radius = (90 - deg) * pxPerDeg;
+      if (radius >= 5) {
+        const [zx, zy2] = rotatePt(cx, zy);
+        ctx.beginPath();
+        ctx.arc(zx, zy2, radius, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+    } else {
+      if (Math.abs(deg - adi.pitch) > 45) continue;
+      const ny = cy + (90 + adi.pitch) * pxPerDeg;
+      const radius = (90 + deg) * pxPerDeg;
+      if (radius >= 5) {
+        const [nx, ny2] = rotatePt(cx, ny);
+        const dashCount = 16;
+        const stepAng = (Math.PI * 2) / dashCount;
+        const dashAng = stepAng * 0.55;
+        ctx.beginPath();
+        for (let i = 0; i < dashCount; i++) {
+          const a1 = i * stepAng, a2 = a1 + dashAng;
+          ctx.moveTo(nx + Math.sin(a1) * radius, ny2 - Math.cos(a1) * radius);
+          ctx.lineTo(nx + Math.sin(a2) * radius, ny2 - Math.cos(a2) * radius);
+        }
+        ctx.stroke();
+        for (let k = 0; k < 4; k++) {
+          const ca = (k * Math.PI) / 2;
+          const bx = nx + Math.sin(ca) * radius;
+          const by = ny2 - Math.cos(ca) * radius;
+          const outX = Math.sin(ca), outY = -Math.cos(ca);
+          const tanX = -outY, tanY = outX;
+          ctx.beginPath();
+          ctx.moveTo(bx + outX * 6, by + outY * 6);
+          ctx.lineTo(bx - tanX * 3, by - tanY * 3);
+          ctx.lineTo(bx + tanX * 3, by + tanY * 3);
+          ctx.closePath();
+          ctx.fill();
+        }
+      }
+    }
+  }
+
+  // Cardinal crosses at zenith and nadir.
+  const drawCross = (pxx, pyy, invert) => {
+    ctx.beginPath();
+    ctx.arc(pxx, pyy, 7, 0, Math.PI * 2);
+    ctx.stroke();
+    const cardinals = [[0, "N"], [90, "E"], [180, "S"], [270, "W"]];
+    ctx.font = "600 10px ui-monospace, monospace";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    for (const [cDeg, lbl] of cardinals) {
+      const ang = (((cDeg - adi.hdg) * Math.PI) / 180) * invert - rollRad;
+      ctx.beginPath();
+      ctx.moveTo(pxx + Math.sin(ang) * 7, pyy - Math.cos(ang) * 7);
+      ctx.lineTo(pxx + Math.sin(ang) * 20, pyy - Math.cos(ang) * 20);
+      ctx.stroke();
+      ctx.fillText(lbl, pxx + Math.sin(ang) * 28, pyy - Math.cos(ang) * 28);
+    }
+  };
+  const zDist = -(90 - adi.pitch) * pxPerDeg;
+  if (Math.abs(zDist) <= H * 0.62) {
+    const [zx, zy] = rotatePt(cx, cy + zDist);
+    drawCross(zx, zy, 1);
+  }
+  const nDist = (90 + adi.pitch) * pxPerDeg;
+  if (Math.abs(nDist) <= H * 0.62) {
+    const [nx, ny] = rotatePt(cx, cy + nDist);
+    drawCross(nx, ny, -1);
+  }
+
+  // PC-21 boresight ghost.
+  ctx.lineWidth = 1.8;
+  ctx.beginPath();
+  ctx.moveTo(cx - 16, cy); ctx.lineTo(cx - 7, cy);
+  ctx.lineTo(cx - 3, cy + 5); ctx.lineTo(cx, cy);
+  ctx.lineTo(cx + 3, cy + 5); ctx.lineTo(cx + 7, cy);
+  ctx.lineTo(cx + 16, cy);
+  ctx.stroke();
+
+  // Dynamic flight path vector from vario + ground speed.
+  const spdMs = (d.spd || 0) / 3.6;
+  const fpaDeg = spdMs > 2 ? (Math.atan2(d.vspd || 0, spdMs) * 180) / Math.PI : 0;
+  let [fx, fy] = rotatePt(cx, cy + (adi.pitch - fpaDeg) * pxPerDeg);
+  fx = Math.max(40, Math.min(W - 40, fx));
+  fy = Math.max(40, Math.min(H - 40, fy));
+  ctx.globalAlpha = 0.9;
+  ctx.beginPath(); ctx.arc(fx, fy, 5, 0, Math.PI * 2); ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(fx - 14, fy); ctx.lineTo(fx - 6, fy);
+  ctx.moveTo(fx + 6, fy); ctx.lineTo(fx + 14, fy);
+  ctx.stroke();
+  ctx.globalAlpha = 1;
+
+  ctx.textAlign = "left";
+  ctx.font = "600 11px ui-monospace, monospace";
+  ctx.fillText("HDG " + String(Math.round(((adi.hdg + 360) % 360))).padStart(3, "0"), 14, 20);
+  ctx.textAlign = "right";
+  ctx.fillText("GRIPEN", W - 14, 20);
+  ctx.restore();
+
+  // F-22 style dot dials for speed and altitude.
+  const dialR = Math.min(W, H) * 0.088;
+  drawDotDial(ctx, W * 0.14, H * 0.60, dialR, d.spd || 0,
+              Math.max(120, Math.ceil((d.maxSpd || d.spd || 0) / 40) * 40), "km/h", C);
+  drawDotDial(ctx, W * 0.86, H * 0.60, dialR, d.alt || 0,
+              Math.max(200, Math.ceil((d.maxAlt || d.alt || 0) / 100) * 100), "m", C);
+}
+
+function drawDotDial(ctx, x, y, r, value, max, unit, C) {
+  ctx.save();
+  ctx.globalAlpha = 0.35;
+  ctx.fillStyle = C.panel;
+  ctx.beginPath(); ctx.arc(x, y, r + 6, 0, Math.PI * 2); ctx.fill();
+  ctx.globalAlpha = 1;
+  ctx.strokeStyle = C.accent;
+  ctx.lineWidth = 1.2;
+  ctx.beginPath(); ctx.arc(x, y, r + 6, 0, Math.PI * 2); ctx.stroke();
+
+  const start = (Math.PI * 3) / 4;
+  const sweep = Math.PI * 1.5;
+  const frac = Math.max(0, Math.min(1, value / max));
+  ctx.fillStyle = C.accent;
+  for (let i = 0; i <= 20; i++) {
+    const a = start + (i / 20) * sweep;
+    const on = i / 20 <= frac;
+    const rr = i % 5 === 0 ? r * 0.80 : r * 0.88;
+    ctx.globalAlpha = on ? 1 : 0.28;
+    ctx.beginPath();
+    ctx.arc(x + Math.sin(a) * rr, y - Math.cos(a) * rr, i % 5 === 0 ? 2.4 : 1.4,
+            0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillStyle = C.text;
+  ctx.font = `700 ${Math.round(r * 0.48)}px ui-monospace, monospace`;
+  ctx.fillText(String(Math.round(value)), x, y - 3);
+  ctx.fillStyle = C.muted;
+  ctx.font = `600 ${Math.round(r * 0.24)}px ui-monospace, monospace`;
+  ctx.fillText(unit, x, y + r * 0.46);
+  ctx.restore();
+}
+
+// --- A3: Garmin G1000-style PFD + HSI ------------------------------------
+function drawG1000(ctx, W, H, d, C) {
+  const cx = W / 2;
+  const tapeH = 62;
+  const adiArea = (H - tapeH) * 0.56;
+  const cy = tapeH + adiArea / 2;
+  const R = Math.min(W * 0.30, adiArea * 0.44);
+  drawHeadingTape(ctx, W, cx, adi.hdg, C);
+  drawAdiCircle(ctx, cx, cy, R, d, C, { chevrons: true });
+  drawTapes(ctx, W, cx, cy, R * 1.02, d, C);
+  const remain = H - tapeH - adiArea;
+  drawHsi(ctx, cx, H - remain / 2 + 2, Math.min(W * 0.16, remain * 0.46), C);
+}
+
+function drawHsi(ctx, cx, cy, r, C) {
+  const hdg = adi.hdg;
+  ctx.save();
+  ctx.fillStyle = "#0a1219";
+  ctx.strokeStyle = C.border;
+  ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+
+  ctx.font = "600 9px ui-monospace, monospace";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  for (let deg = 0; deg < 360; deg += 5) {
+    const ang = ((deg - hdg) * Math.PI) / 180;
+    const major = deg % 30 === 0;
+    const r1 = r - (major ? 10 : 6), r2 = r - 2;
+    ctx.strokeStyle = major ? C.text : C.muted;
+    ctx.globalAlpha = major ? 0.95 : 0.5;
+    ctx.beginPath();
+    ctx.moveTo(cx + Math.sin(ang) * r1, cy - Math.cos(ang) * r1);
+    ctx.lineTo(cx + Math.sin(ang) * r2, cy - Math.cos(ang) * r2);
+    ctx.stroke();
+    if (major) {
+      ctx.globalAlpha = 1;
+      const isCard = deg % 90 === 0;
+      ctx.fillStyle = isCard ? C.warn : C.text;
+      ctx.font = isCard ? "700 11px ui-monospace, monospace" : "600 9px ui-monospace, monospace";
+      const lbl = deg === 0 ? "N" : deg === 90 ? "E" : deg === 180 ? "S" : deg === 270 ? "W" : String(deg / 10);
+      ctx.fillText(lbl, cx + Math.sin(ang) * (r - 19), cy - Math.cos(ang) * (r - 19));
+    }
+  }
+  ctx.globalAlpha = 1;
+
+  // fixed aircraft symbol (center, pointing up)
+  ctx.strokeStyle = C.warn;
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(cx, cy - 9); ctx.lineTo(cx - 6, cy + 7); ctx.lineTo(cx + 6, cy + 7);
+  ctx.closePath();
+  ctx.stroke();
+
+  // digital heading window
+  ctx.fillStyle = C.panel2;
+  ctx.strokeStyle = C.accent;
+  ctx.lineWidth = 1.5;
+  ctx.fillRect(cx - 23, cy - 11, 46, 22);
+  ctx.strokeRect(cx - 23, cy - 11, 46, 22);
+  ctx.fillStyle = C.accent;
+  ctx.font = "700 13px ui-monospace, monospace";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(String(Math.round(((hdg + 360) % 360))).padStart(3, "0"), cx, cy + 1);
+  ctx.restore();
+}
+
+// --- B: automotive cluster (no attitude ball) ----------------------------
+function drawCarCluster(ctx, W, H, d, C) {
+  const cx = W / 2, cy = H * 0.47;
+  const R = Math.min(W * 0.26, H * 0.33);
+  const maxSpd = Math.max(120, Math.ceil((d.maxSpd || d.spd || 0) / 40) * 40);
+  drawCompassStrip(ctx, cx, 24, Math.min(W * 0.62, 360), adi.hdg, C);
+  drawArcGauge(ctx, cx, cy, R, d.spd || 0, maxSpd, "km/h", C, true);
+  drawArcGauge(ctx, cx - R * 1.45, cy + R * 0.10, R * 0.42, (d.pwr || 0) / 1000,
+               Math.max(1, Math.ceil(((d.peakW || d.pwr || 0) / 1000) * 10) / 10), "kW", C, false);
+  drawArcGauge(ctx, cx + R * 1.45, cy + R * 0.10, R * 0.42, d.curr || 0,
+               Math.max(40, Math.ceil((d.peakI || d.curr || 0) / 20) * 20), "A", C, false);
+
+  const bw = Math.min(W * 0.24, 150), gap = 10;
+  const totalW = bw * 3 + gap * 2;
+  const bx = cx - totalW / 2;
+  const by = H - 36;
+  drawBar(ctx, bx, by, bw, "Battery", ((d.cellV || 0) - 3.0) / 1.25,
+          `${(d.cellV || 0).toFixed(2)} V`, C, false);
+  drawBar(ctx, bx + bw + gap, by, bw, "ESC", ((d.escT || 0) - 20) / 80,
+          `${Math.round(d.escT || 0)} °C`, C, true);
+  drawBar(ctx, bx + (bw + gap) * 2, by, bw, "Motor", ((d.motT || 0) - 20) / 80,
+          `${Math.round(d.motT || 0)} °C`, C, true);
+}
+
+function drawArcGauge(ctx, cx, cy, r, value, max, unit, C, big) {
+  const start = Math.PI * 0.75;
+  const sweep = Math.PI * 1.5;
+  const frac = Math.max(0, Math.min(1, value / max));
+  ctx.save();
+  ctx.strokeStyle = C.border;
+  ctx.lineWidth = big ? 6 : 4;
+  ctx.beginPath(); ctx.arc(cx, cy, r, start, start + sweep); ctx.stroke();
+  ctx.strokeStyle = C.accent;
+  ctx.lineWidth = big ? 6 : 4;
+  ctx.beginPath(); ctx.arc(cx, cy, r, start, start + sweep * frac); ctx.stroke();
+
+  const steps = big ? 5 : 4;
+  ctx.font = `600 ${big ? 11 : 9}px ui-monospace, monospace`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  for (let i = 0; i <= steps; i++) {
+    const a = start + (i / steps) * sweep;
+    const r1 = r + (big ? 6 : 4), r2 = r + (big ? 12 : 9);
+    ctx.strokeStyle = C.muted;
+    ctx.beginPath();
+    ctx.moveTo(cx + Math.cos(a) * r1, cy + Math.sin(a) * r1);
+    ctx.lineTo(cx + Math.cos(a) * r2, cy + Math.sin(a) * r2);
+    ctx.stroke();
+    ctx.fillStyle = C.muted;
+    const val = (max * i) / steps;
+    const labelStr = max <= 10 ? val.toFixed(1) : String(Math.round(val));
+    ctx.fillText(labelStr, cx + Math.cos(a) * (r + (big ? 25 : 19)),
+                 cy + Math.sin(a) * (r + (big ? 25 : 19)));
+  }
+
+  ctx.fillStyle = C.text;
+  ctx.font = `700 ${big ? Math.round(r * 0.4) : Math.round(r * 0.48)}px ui-monospace, monospace`;
+  ctx.fillText(String(Math.round(value)), cx, cy - (big ? 4 : 2));
+  ctx.fillStyle = C.muted;
+  ctx.font = `600 ${big ? 12 : 10}px ui-monospace, monospace`;
+  ctx.fillText(unit, cx, cy + (big ? r * 0.30 : r * 0.34));
+  ctx.restore();
+}
+
+function drawBar(ctx, x, y, w, label, frac, valueTxt, C, hot) {
+  const f = Math.max(0, Math.min(1, frac));
+  ctx.save();
+  ctx.font = "600 10px ui-monospace, monospace";
+  ctx.textAlign = "left";
+  ctx.textBaseline = "middle";
+  ctx.fillStyle = C.muted;
+  ctx.fillText(label, x, y - 9);
+  ctx.textAlign = "right";
+  ctx.fillStyle = C.text;
+  ctx.fillText(valueTxt, x + w, y - 9);
+  ctx.strokeStyle = C.border;
+  ctx.lineWidth = 1;
+  ctx.strokeRect(x, y, w, 8);
+  ctx.fillStyle = hot ? C.warn : C.accent;
+  ctx.fillRect(x + 1, y + 1, (w - 2) * f, 6);
+  ctx.restore();
+}
+
+function drawCompassStrip(ctx, cx, y, width, hdg, C) {
+  const half = width / 2;
+  const pxPerDeg = 2.0;
+  const rounded = Math.round(hdg / 5) * 5;
+  ctx.save();
+  ctx.font = "600 10px ui-monospace, monospace";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  for (let dd = -55; dd <= 55; dd += 5) {
+    const brg = ((rounded + dd) % 360 + 360) % 360;
+    const x = cx + dd * pxPerDeg;
+    if (x < cx - half || x > cx + half) continue;
+    const major = brg % 30 === 0;
+    ctx.strokeStyle = major ? C.text : C.muted;
+    ctx.globalAlpha = major ? 1 : 0.55;
+    ctx.beginPath();
+    ctx.moveTo(x, y + 6);
+    ctx.lineTo(x, y + (major ? 13 : 9));
+    ctx.stroke();
+    if (major) {
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = C.muted;
+      ctx.fillText(String(brg).padStart(3, "0"), x, y - 3);
+    }
+  }
+  ctx.globalAlpha = 1;
+  ctx.fillStyle = C.accent;
+  ctx.beginPath();
+  ctx.moveTo(cx - 5, y + 17);
+  ctx.lineTo(cx + 5, y + 17);
+  ctx.lineTo(cx, y + 10);
+  ctx.closePath();
+  ctx.fill();
+  ctx.fillStyle = C.text;
+  ctx.font = "700 13px ui-monospace, monospace";
+  ctx.fillText(String(Math.round(((hdg + 360) % 360))).padStart(3, "0"), cx, y + 32);
+  ctx.restore();
+}
+
+// --- C: marine console (rose + heel + pitch schematics) ------------------
+function drawMarine(ctx, W, H, d, C) {
+  const hdg = adi.hdg;
+  const r = Math.min(W * 0.30, H * 0.34);
+  const ccx = W * 0.32, ccy = H * 0.46;
+
+  ctx.save();
+  ctx.fillStyle = "#04141a";
+  ctx.strokeStyle = C.border;
+  ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.arc(ccx, ccy, r, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+
+  ctx.font = "600 9px ui-monospace, monospace";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  for (let deg = 0; deg < 360; deg += 5) {
+    const ang = ((deg - hdg) * Math.PI) / 180;
+    const major = deg % 30 === 0;
+    const r1 = r - (major ? 12 : 6), r2 = r - 2;
+    ctx.strokeStyle = major ? C.text : C.muted;
+    ctx.globalAlpha = major ? 1 : 0.5;
+    ctx.beginPath();
+    ctx.moveTo(ccx + Math.sin(ang) * r1, ccy - Math.cos(ang) * r1);
+    ctx.lineTo(ccx + Math.sin(ang) * r2, ccy - Math.cos(ang) * r2);
+    ctx.stroke();
+    if (major) {
+      ctx.globalAlpha = 1;
+      const isCard = deg % 90 === 0;
+      ctx.fillStyle = isCard ? C.warn : C.text;
+      ctx.font = isCard ? "700 12px ui-monospace, monospace" : "600 9px ui-monospace, monospace";
+      const lbl = deg === 0 ? "N" : deg === 90 ? "E" : deg === 180 ? "S" : deg === 270 ? "W" : String(deg / 10);
+      ctx.fillText(lbl, ccx + Math.sin(ang) * (r - (isCard ? 22 : 17)),
+                   ccy - Math.cos(ang) * (r - (isCard ? 22 : 17)));
+    }
+  }
+  ctx.globalAlpha = 1;
+
+  ctx.fillStyle = C.panel2;
+  ctx.strokeStyle = C.accent;
+  ctx.lineWidth = 1.5;
+  ctx.fillRect(ccx - 24, ccy - 11, 48, 22);
+  ctx.strokeRect(ccx - 24, ccy - 11, 48, 22);
+  ctx.fillStyle = C.accent;
+  ctx.font = "700 15px ui-monospace, monospace";
+  ctx.fillText(String(Math.round(((hdg + 360) % 360))).padStart(3, "0"), ccx, ccy + 1);
+  ctx.fillStyle = C.warn;
+  ctx.beginPath();
+  ctx.moveTo(ccx - 6, ccy - r - 6);
+  ctx.lineTo(ccx + 6, ccy - r - 6);
+  ctx.lineTo(ccx, ccy - r + 2);
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+
+  // speed / capacity text
+  ctx.save();
+  ctx.textAlign = "left";
+  ctx.textBaseline = "middle";
+  ctx.fillStyle = C.accent;
+  ctx.font = "700 22px ui-monospace, monospace";
+  ctx.fillText(String(Math.round(d.spd || 0)), 18, H * 0.12);
+  ctx.font = "600 10px ui-monospace, monospace";
+  ctx.fillStyle = C.muted;
+  const spdTxt = `${Math.round((d.spd || 0) / 1.852)} kn`;
+  ctx.fillText("km/h", 20 + String(Math.round(d.spd || 0)).length * 14, H * 0.12 + 8);
+  ctx.fillText(spdTxt, 20, H * 0.12 + 24);
+  ctx.restore();
+
+  // right column schematics
+  const rx = W * 0.60, rw = W * 0.36;
+  drawShipHeel(ctx, rx, H * 0.30, rw, adi.roll, C);
+  drawShipPitch(ctx, rx, H * 0.74, rw, adi.pitch, C);
+}
+
+function drawShipHeel(ctx, x, y, w, rollDeg, C) {
+  ctx.save();
+  ctx.font = "600 11px ui-monospace, monospace";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillStyle = C.muted;
+  ctx.fillText(`HEEL ${rollDeg >= 0 ? "+" : ""}${Math.round(rollDeg)}°`, x + w / 2, y - 32);
+
+  ctx.strokeStyle = C.border;
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(x, y + 20); ctx.lineTo(x + w, y + 20);
+  ctx.stroke();
+
+  const ang = (rollDeg * Math.PI) / 180;
+  const cx = x + w / 2, cy = y + 20;
+  const c = Math.cos(ang), s = Math.sin(ang);
+  const pt = (lx, ly) => [cx + lx * c - ly * s, cy + lx * s + ly * c];
+
+  ctx.strokeStyle = C.accent;
+  ctx.lineWidth = 2;
+  const hull = [[-w * 0.22, -6], [w * 0.22, -6], [w * 0.16, 14], [-w * 0.16, 14]];
+  ctx.beginPath();
+  hull.forEach(([lx, ly], i) => {
+    const [px, py] = pt(lx, ly);
+    if (i) ctx.lineTo(px, py); else ctx.moveTo(px, py);
+  });
+  ctx.closePath();
+  ctx.stroke();
+
+  const sup = [[-w * 0.09, -6], [w * 0.09, -6], [w * 0.06, -24], [-w * 0.06, -24]];
+  ctx.beginPath();
+  sup.forEach(([lx, ly], i) => {
+    const [px, py] = pt(lx, ly);
+    if (i) ctx.lineTo(px, py); else ctx.moveTo(px, py);
+  });
+  ctx.closePath();
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawShipPitch(ctx, x, y, w, pitchDeg, C) {
+  ctx.save();
+  ctx.font = "600 11px ui-monospace, monospace";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillStyle = C.muted;
+  ctx.fillText(`PITCH ${pitchDeg >= 0 ? "+" : ""}${Math.round(pitchDeg)}°`, x + w / 2, y - 30);
+
+  const slope = Math.tan(Math.max(-0.32, Math.min(0.32, ((pitchDeg * Math.PI) / 180) * 2.2)));
+  const wy = y + 16;
+  ctx.strokeStyle = C.border;
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(x, wy - (slope * w) / 2);
+  ctx.lineTo(x + w, wy + (slope * w) / 2);
+  ctx.stroke();
+
+  const ang = Math.atan(slope);
+  const cx = x + w / 2;
+  const c = Math.cos(ang), s = Math.sin(ang);
+  const pt = (lx, ly) => [cx + lx * c - ly * s, wy + lx * s + ly * c];
+
+  ctx.strokeStyle = C.accent;
+  ctx.lineWidth = 2;
+  const hull = [[-w * 0.20, -4], [w * 0.20, -4], [w * 0.14, 10], [-w * 0.14, 10]];
+  ctx.beginPath();
+  hull.forEach(([lx, ly], i) => {
+    const [px, py] = pt(lx, ly);
+    if (i) ctx.lineTo(px, py); else ctx.moveTo(px, py);
+  });
+  ctx.closePath();
+  ctx.stroke();
+
+  ctx.beginPath();
+  const [m1x, m1y] = pt(0, -4);
+  const [m2x, m2y] = pt(0, -28);
+  ctx.moveTo(m1x, m1y);
+  ctx.lineTo(m2x, m2y);
+  ctx.stroke();
+  ctx.restore();
+}
+
 
 function drawHeadingTape(ctx, W, cx, hdg, C) {
   const top = 4, h = 30, boxH = 20;
@@ -1848,7 +2431,8 @@ function updateKpis(d) {
 
 function updateEdtTab(d) {
   $("#edfPower").textContent = `${Math.round(d.pwr || 0)} W`;
-  $("#edfPeakPower").textContent = `Peak: ${Math.round(d.peakW || 0)} W`;
+  $("#edfPeakPower").textContent =
+    `Peak: ${Math.round(d.peakW || 0)} W • ${(d.peakI || 0).toFixed(1)} A`;
   $("#edfRpm").textContent = `${Math.round(d.rpm || 0)}`;
   $("#edfCellSag").textContent = `Cell: ${(d.cellV || 0).toFixed(2)} V`;
   $("#edfEscTemp").textContent = `${Math.round(d.escT || 0)} °C`;
@@ -1857,10 +2441,24 @@ function updateEdtTab(d) {
   bar.style.width = tPct + "%";
   bar.classList.toggle("hot", tPct > 75);
   $("#edfMah").textContent = `${Math.round(d.mah || 0)} mAh`;
-  $("#edfMinVolt").textContent = `Min pack: ${(d.minV || 0).toFixed(2)} V`;
+  $("#edfMinVolt").textContent =
+    `Min pack: ${(d.minV || 0).toFixed(2)} V • min cell ${(d.cellMin || 0).toFixed(2)} V`;
   $("#edfMotorTemp").textContent = `${Math.round(d.motT || 0)} °C`;
-  const eff = d.pwr > 5 ? `${Math.round((d.pwr / Math.max(1, d.curr)) * 10) / 10} V load` : "--";
-  $("#edfEfficiency").textContent = eff;
+  $("#edfPeakCurrent").textContent = `Peak: ${(d.peakI || 0).toFixed(1)} A`;
+
+  const sagP = Number(d.sagPack) || 0;
+  const sagC = Number(d.sagCell) || 0;
+  const rest = Number(d.restCell) || 0;
+  $("#edfSag").textContent = sagP > 0 ? `${sagP.toFixed(2)} V` : "--";
+  $("#edfSagSub").textContent = sagP > 0
+    ? `cell ${sagC.toFixed(3)} V • rest ${rest.toFixed(2)} V`
+    : "needs cells + load";
+
+  const r = Number(d.resMohm) || 0;
+  $("#edfRes").textContent = r > 0 ? `${r.toFixed(1)} mΩ` : "--";
+  $("#edfResSub").textContent = r > 0
+    ? `at ${(d.curr || 0).toFixed(1)} A`
+    : "needs cells + current";
 }
 
 function updateDiagTab(d) {
@@ -1873,11 +2471,11 @@ function updateDiagTab(d) {
     "PhysID: 0x" + (d.lastPhy || 0).toString(16).toUpperCase().padStart(2, "0");
   $("#logCount").textContent = `${state.logger.rows.length}`;
   $("#logRate").textContent = state.logger.on
-    ? `logging @ ${Math.round(1000 / state.logger.interval)} Hz`
-    : "stopped";
+    ? `logging @ ${Math.round(1000 / state.logger.interval)} Hz • ${state.logger.rows.length}/${state.logger.max}`
+    : `${state.logger.rows.length} rows buffered • max ${state.logger.max}`;
   $("#diagBus").textContent = d.master ? "BENCH MASTER" : ((d.fps > 0) ? "RX LINK" : "NO SIGNAL");
-  $("#diagBusSub").textContent = `polls sent: ${d.polls || 0} • mode: ${
-    ["auto", "receiver", "bench"][d.busMode] || "auto"}`;
+  $("#diagBusSub").textContent =
+    `polls ${d.pollsSec || 0}/s (${d.polls || 0}) • mode: ${["auto", "receiver", "bench"][d.busMode] || "auto"}`;
   $("#diagAtt").textContent = state.demo ? "SIM" : (d.attSrc || "NONE");
   $("#diagHdg").textContent =
     `heading: ${state.demo ? "IMU (sim)" : (d.hdgSrc || "NONE")}`;
@@ -1911,35 +2509,49 @@ let lastFrameMs = performance.now();
 let lastMirrorMs = 0;
 
 function frame(t) {
-  const dt = Math.min(0.1, Math.max(0, (t - lastFrameMs) / 1000));
-  lastFrameMs = t;
+  try {
+    const dt = Math.min(0.1, Math.max(0, (t - lastFrameMs) / 1000));
+    lastFrameMs = t;
 
-  if (state.demo) stepSim(dt);
-  else if (state.live && Date.now() - state.lastMsg > 3500) setStatus("stale");
+    // Stale watchdog: a half-open socket never fires onclose, so force a
+    // reconnect instead of freezing the dashboard forever.
+    if (!state.demo && state.live && Date.now() - state.lastMsg > 5000) {
+      state.live = false;
+      setStatus("lost");
+      const dead = state.ws;
+      state.ws = null;
+      if (dead) { try { dead.close(); } catch (e) {} }
+      clearTimeout(state.wsTimer);
+      state.wsTimer = setTimeout(connectWs, 1000);
+    }
 
-  const d = state.d;
-  charts.power.push(d);
-  charts.nav.push(d);
-  charts.edf.push(d);
+    if (state.demo) stepSim(dt);
 
-  updateKpis(d);
-  updateEdtTab(d);
-  updateDiagTab(d);
-  updateGpsTab(d);
-  updateFooter(d);
-  drawADI(d);
+    const d = state.d;
+    charts.power.push(d);
+    charts.nav.push(d);
+    charts.edf.push(d);
 
-  if (t - lastMirrorMs > 100) {
-    drawOledMirror(d);
-    lastMirrorMs = t;
+    updateKpis(d);
+    updateEdtTab(d);
+    updateDiagTab(d);
+    updateGpsTab(d);
+    updateFooter(d);
+    drawADI(d);
+
+    if (t - lastMirrorMs > 100) {
+      drawOledMirror(d);
+      lastMirrorMs = t;
+    }
+
+    charts.power.draw();
+    charts.nav.draw();
+    charts.edf.draw();
+
+    loggerTick(d);
+  } catch (e) {
+    console.error("render error", e);
   }
-
-  // charts redraw (rAF, hover-aware)
-  charts.power.draw();
-  charts.nav.draw();
-  charts.edf.draw();
-
-  loggerTick(d);
   requestAnimationFrame(frame);
 }
 

@@ -70,6 +70,13 @@ struct TelemetryData {
     float minCellV = 0.0f;
     bool cellsValid = false;
     unsigned long cellsLastMs = 0;
+    unsigned long vfasLastMs = 0;
+
+    // -- Voltage sag & internal resistance (drivetrain diagnostics) ------------
+    float restCellV = 0.0f;   // no-load cell voltage reference (EMA)
+    float sagCellV = 0.0f;    // rest - loaded, per cell
+    float sagPackV = 0.0f;    // rest - loaded, whole pack
+    float resMohm = 0.0f;     // estimated pack internal resistance (EMA)
 
     // -- Flight & navigation ---------------------------------------------------
     float altitude = 0.0f;
@@ -115,6 +122,7 @@ struct TelemetryData {
     bool busMasterActive = false;
     bool busRxSeen = false;
     uint32_t pollsSent = 0;
+    uint16_t pollsPerSec = 0;
 
     // ------------------------------------------------------------------------
     bool cellsFresh(unsigned long now) const {
@@ -123,9 +131,20 @@ struct TelemetryData {
 
     void updateDerived(float dtSeconds) {
         unsigned long now = millis();
-        totalVoltage = vfas1 + vfas2;
-
         bool fresh = cellsFresh(now);
+
+        // Pack voltage: VFAS when present, otherwise the sum of FLVSS cells.
+        float vfas = vfas1 + vfas2;
+        bool vfasFresh = vfasLastMs && (now - vfasLastMs) < 3000;
+        if ((!vfasFresh || vfas < 1.0f) && fresh) {
+            float sum = 0.0f;
+            for (uint8_t i = 0; i < cellCount && i < MAX_CELLS; i++) {
+                if (cellV[i] > 0.3f) sum += cellV[i];
+            }
+            if (sum > 1.0f) vfas = sum;
+        }
+        totalVoltage = vfas;
+
         if (fresh) {
             float mn = 99.0f;
             for (uint8_t i = 0; i < MAX_CELLS; i++) {
@@ -141,6 +160,27 @@ struct TelemetryData {
         } else if (totalVoltage > 2.5f) {
             if (totalVoltage < minVoltage) minVoltage = totalVoltage;
             cellVoltage = totalVoltage / (float)max((uint8_t)1, detectedCells);
+        }
+
+        // Voltage sag & internal resistance (requires cell telemetry + current).
+        if (fresh && cellVoltage > 2.0f) {
+            if (current < 0.5f) {
+                restCellV = (restCellV <= 0.0f)
+                                ? cellVoltage
+                                : restCellV + (cellVoltage - restCellV) * 0.02f;
+            }
+            if (restCellV > 0.0f && minCellV > 0.5f) {
+                float sagC = restCellV - minCellV;
+                sagCellV = (sagC > 0.0f) ? sagC : 0.0f;
+                sagPackV = sagCellV * (float)max((uint8_t)1, detectedCells);
+                if (current > 1.0f) {
+                    float restPack = restCellV * (float)max((uint8_t)1, detectedCells);
+                    float r = (restPack - totalVoltage) / current * 1000.0f;
+                    if (r >= 0.0f && r < 500.0f) {
+                        resMohm = (resMohm <= 0.0f) ? r : resMohm + (r - resMohm) * 0.03f;
+                    }
+                }
+            }
         }
 
         powerWatts = totalVoltage * current;

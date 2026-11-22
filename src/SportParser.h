@@ -81,6 +81,7 @@ private:
     bool _inListenWindow = false;
     bool _taskStarted = false;
     uint16_t _pollCounter = 0;
+    volatile uint16_t _pollCounterSec = 0;
     uint8_t _activeIdx = 0;
     uint8_t _discoveryIdx = 0;
 
@@ -118,9 +119,11 @@ private:
 
         if (appId == APPID_VFAS_SECOND) {
             d.vfas2 = val / 100.0f;
+            d.vfasLastMs = millis();
             d.activeSensorMask |= (1 << 0);
         } else if (baseId == APPID_VFAS_FIRST) {
             d.vfas1 = val / 100.0f;
+            d.vfasLastMs = millis();
             d.activeSensorMask |= (1 << 0);
         } else if (baseId == APPID_CURR_FIRST) {
             d.current = val / 10.0f;
@@ -269,6 +272,7 @@ private:
         _port->write(SPORT_START_STOP);
         _port->write(id);
         _pollsSent++;
+        _pollCounterSec++;
     }
 
     static void pollTaskThunk(void* arg) {
@@ -323,7 +327,9 @@ private:
                 _pollEnabled = false;
                 // A real receiver polls continuously; hearing anything while
                 // we are not transmitting means someone else owns the bus.
-                if (_lastRxByteMs > (_listenStart + 5)) {
+                // Real sensors can answer a few ms late, so ignore the first
+                // 40 ms of the listen window to avoid false demotions.
+                if (_lastRxByteMs > (_listenStart + 40)) {
                     _masterActive = false;
                     _pollEnabled = false;
                     _inListenWindow = false;
@@ -400,7 +406,9 @@ public:
 
         if (now - _lastFpsTime >= 1000) {
             data.packetsPerSec = _fpsCounter;
+            data.pollsPerSec = _pollCounterSec;
             _fpsCounter = 0;
+            _pollCounterSec = 0;
             _lastFpsTime = now;
         }
     }

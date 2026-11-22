@@ -2,6 +2,43 @@
 
 All notable changes to this project are documented here.
 
+## [2.2.0] — “Instruments”
+
+### Added
+
+- **Theme-specific instruments** (web): A1 Gripen HUD (zenith/nadir hemispherical
+  ladder, cardinal crosses, boresight ghost, live FPV, dot dials), A2 PFD with
+  chevroned negative ladder + tapes, A3 G1000-style ADI + HSI compass rose,
+  B automotive cluster (speedo/kW/amps + battery/temp bars, no attitude ball),
+  C marine console (compass rose + stern heel + side pitch schematics).
+- **OLED preset 4 follows the active theme**: monochrome jet HUD (A1), ADI ladder
+  (A2/A3), speedo (B) or compass/heel (C).
+- **Voltage sag and internal resistance**: no-load cell reference tracking, sag per
+  cell and pack, estimated pack resistance (mΩ); displayed on the EDF tab and as a
+  `SAG` row on the OLED EDF preset.
+- **Pack voltage fallback from FLVSS cells** when no VFAS frames are present.
+- **Bus diagnostics**: polls/s and responses/s on the Bus & Logger tab.
+- **Logger capacity selector** (20 000 / 50 000 rows) and buffered-row display.
+- GPLv3 LICENSE; README theme gallery, oXs inverted-flight patch and bench wiring.
+
+### Changed
+
+- AUTO listen-window debounce raised from 5 ms to 40 ms so late real-sensor
+  responses cannot trigger a false bus hand-back.
+- Roll smoothing is now wrap-aware across ±180° (inverted flight no longer spins the
+  filter the long way around).
+- EDF preset header now shows consumed mAh; the peak row carries `SAG`.
+
+### Fixed
+
+- **Inverted flight**: with the oXs aviation-convention patch (documented in README),
+  roll spans ±180° and inverted attitudes display correctly instead of snapping to
+  upright.
+- **Half-open WebSockets**: a stale connection now forces a reconnect instead of
+  freezing the dashboard; the render loop is exception-guarded.
+- Bench master with a real FrSky sensor (FLVSS): documented 1 kΩ drive-strength fix
+  and diagnostics to separate weak drive from bus contention.
+
 ## [2.1.0] — “Field Kit”
 
 ### Added

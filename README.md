@@ -1,4 +1,4 @@
-# ESP32 Telemetry Multitool — v2.1.0 “Field Kit”
+# ESP32 Telemetry Multitool — v2.2.0 “Instruments”
 
 A direct-connect RC telemetry reader, 128×64 OLED HUD and live engineering web
 dashboard for the **ESP-WROOM-32 (`esp32dev`)** (and optionally **LOLIN C3 Pico**)
@@ -12,23 +12,22 @@ bank scale and heading tape.
 
 ---
 
-## What’s new in v2.1.0 — “Field Kit”
+## What’s new in v2.2.0 — “Instruments”
 
 | Area | Highlights |
 | --- | --- |
-| **GPS / Map tab** | Offline live track plot: home auto-set at first fix (+ manual re-anchor), breadcrumb trail, distance rings, north-up/track-up, scale bar, position / distance / bearing / altitude readouts. No internet required. |
-| **GPX export** | Logger exports GPX tracks (plus `lat`/`lon` columns in CSV) for any mapping tool. |
-| **Bench polling speed** | S.Port master polling moved to a FreeRTOS task with adaptive sensor rotation — bench frame rate now matches receiver mode (~60+ FPS instead of 6–9). |
-| **Theme sync fixed** | Theme/preset are no longer echoed in the telemetry stream, so selections no longer snap back; the BOOT button broadcasts preset changes to every open dashboard. |
-| **Attitude smoothing** | Adjustable low-pass (0–95 %) for the artificial horizon, persisted on the ESP32. |
-| **Docs** | openXsensor DMP attitude update guide (incl. INT pin) and an attitude reference/limits section. |
+| **Theme instruments** | Every theme now has its own instrument, not just a palette: **A1 Gripen HUD** (ported from the Gripen ETHOS widget: zenith/nadir ladder, cardinal crosses, FPV, dot dials), **A2 PFD** with chevroned negative ladder + tapes, **A3 G1000** (ADI + HSI rose), **B Audi-style cluster** (speedo/kW/amps + bars, no attitude), **C marine console** (compass rose + stern heel + side pitch). |
+| **OLED preset 4 follows the theme** | The monochrome attitude preset mirrors the selected theme: jet HUD, ADI ladder, speedo or compass/heel. |
+| **Inverted flight** | With the oXs aviation-convention patch (below), bank spans ±180° and inverted flight reads correctly; the dashboard's roll filter is now wrap-aware across ±180°. |
+| **Voltage restoration** | Pack voltage falls back to the sum of FLVSS cells when no VFAS frames are present; cells/pack now display from a real voltage sensor alone. |
+| **Voltage sag & internal resistance** | Rest-voltage tracking → sag (cell + pack) and estimated pack resistance in mΩ; shown on the EDF tab and as `SAG` on the OLED EDF preset. |
+| **Bench diagnostics & stability** | Polls/s + responses/s on the Bus tab, 40 ms listen-window debounce, half-open WebSocket auto-recovery, guarded render loop, selectable logger capacity (20k/50k rows). |
+| **Docs** | oXs attitude patch, bench wiring for multi-sensor buses, theme gallery; repository relicensed **GPLv3** (the Gripen HUD port requires it). |
 
-### v2.0.0 highlights (still relevant)
+### Previous milestones
 
-- PFD-style artificial horizon (pitch ladder, ±60° bank scale, heading tape, A2 tapes)
-- openXsensor decode: ACC slots `0x0700/0x0710/0x0720` (pitch/roll/yaw), FLVSS cells, GPS
-- Bench master mode (auto/forced), OLED dense layouts + attitude preset + self-test
-- `ESP32Async/ESPAsyncWebServer` 3.6.x, mDNS, captive portal, gzip UI
+- **v2.1.0 Field Kit** — GPS/Map tab (offline track plot), GPX export, FreeRTOS bench polling, theme sync fix, attitude smoothing.
+- **v2.0.0 Cockpit Edition** — PFD horizon, oXs ACC/cells/GPS decode, bench master mode, OLED redesign, ESP32Async 3.6.x.
 
 See [CHANGELOG.md](CHANGELOG.md) for the full list.
 
@@ -111,6 +110,21 @@ the oXs:
 4. Optional on a GY-86 (HMC5883 present): `CALCULATE_YAW_WITH_HMC5883 YES` after
    the documented magnetometer calibration, for a real compass heading.
 
+**Inverted flight — required oXs patch.** The stock formulas use `atan()`, which caps
+roll at ±90°: going inverted reads as level flight. Patch `oXs_imu.cpp` (the
+`yawCount >= 20` block) to the aviation convention:
+
+```c
+pitch.value = 10.0f * atan2(-gravity.x, sqrt(gravity.y*gravity.y + gravity.z*gravity.z))
+              * radians_to_degrees;   // +-90 deg, nose-up positive
+roll.value  = 10.0f * atan2(gravity.y, gravity.z)
+              * radians_to_degrees;   // +-180 deg, right-bank positive
+```
+
+Rebuild the oXs, then verify on the bench: roll past vertical and the instrument must
+read ~180°, not snap back. If pitch/roll are mirrored for your mounting, use
+*Settings → Attitude input → invert* instead of editing the patch again.
+
 **Limits:** no 6-DOF MEMS AHRS can ignore sustained acceleration. In a long turn the
 horizon leans toward apparent gravity — real aircraft attitude indicators behave the
 same way, only slower. Tune *Settings → Attitude smoothing* to taste; heading prefers
@@ -155,6 +169,24 @@ On the bench: power the oXs from a 5 V source (no receiver rail), connect
 oXs signal + ESP32 tap to the same S.Port wire. RSSI will read 0/– and the UI shows
 **BENCH MASTER** — expected, as there is no link.
 
+> **Bench bus with a real sensor (FLVSS etc.):** the receiver drives the S.Port line
+> with a strong push-pull stage; the ESP32 master drives it through the GPIO17 series
+> resistor. If adding a real FrSky sensor drops the frame rate, reduce that resistor
+> from **4.7 kΩ to 1 kΩ** — or fit a proper single-wire driver. The Bus & Logger tab
+> shows polls/s and responses/s to diagnose this: CRC climbing = bus contention,
+> responses near zero = weak drive.
+
+### Voltage sources
+
+- `VFAS` (`0x0210`) is only transmitted when the oXs config defines
+  `#define VFAS_SOURCE VOLT_1` (or another input). Add that line for direct pack
+  measurement.
+- When no VFAS is present, the firmware **derives pack voltage from the FLVSS cell
+  frames** — a real voltage sensor alone drives pack + per-cell displays on web and
+  OLED.
+- Drivetrain diagnostics: the firmware tracks a no-load cell reference and reports
+  **voltage sag** (cell/pack) plus an estimated **internal resistance (mΩ)**.
+
 ---
 
 ## Build & upload (PlatformIO)
@@ -183,14 +215,28 @@ is absent.
 - **Live HUD** — artificial horizon, OLED mirror, pack voltage/current, altitude/speed
   charts (axes, legends, hover crosshair), KPI strip.
 - **EDF / Drivetrain** — power, RPM, temperatures, consumption and load charts.
-- **Bus & Logger** — packet rate, CRC errors, last app/phys IDs, bus role, attitude
-  source; browser logger (start/stop/rate, CSV + JSON + **GPX** export).
+- **Bus & Logger** — packet rate, CRC errors, last app/phys IDs, bus role, polls/s,
+  attitude source; browser logger (start/stop/rate, capacity 20k or 50k rows, CSV +
+  JSON + **GPX** export). The live stream box shows the newest 80 lines; the ring
+  buffer is the actual log (≈ 67 min at 5 Hz / 20k rows, ≈ 5.5 h at 1 Hz).
 - **GPS / Map** — offline live track plot: auto home at first fix (+ “Set home here”),
   breadcrumb trail, distance rings, north-up / track-up, scale bar; position,
   distance/bearing from home, GPS vs baro altitude, ground speed and course.
 - **Settings** — theme, OLED flip + slot layout, protocol, bus role, cell count,
   GPS speed encoding, attitude slot mapping + sign inversions + smoothing, OLED test
   patterns, apply/save to ESP32.
+
+### Themes and instruments
+
+| Theme | Instrument |
+| --- | --- |
+| **A1 — Fighter Jet HUD** | Gripen-style HUD ported from the author's ETHOS widget: hemispherical pitch ladder (solid zenith circles, dashed nadir circles with cardinal triangles), N/E/S/W crosses at both poles, boresight ghost, live flight-path vector, F-22 dot dials for speed/altitude. |
+| **A2 — Airliner PFD** | Filled attitude ball, pitch ladder with negative-pitch chevrons, ±60° bank scale, speed/altitude tapes, heading tape. |
+| **A3 — GA / G1000** | Garmin-style PFD: attitude ball + tapes and a rotating **HSI compass rose** with cardinal/decade labels. |
+| **B — Automotive cluster** | No attitude ball: central needle speedometer, kW and amp gauges, battery/ESC/motor bars, compass strip. |
+| **C — Marine console** | 2-D navigation first: detailed compass rose, stern-view **heel** schematic and side-view **pitch** schematic, speed in km/h + knots. |
+
+The **OLED preset 4** mirrors the active theme (jet HUD / ADI / speedo / marine).
 
 Connection handling: the page connects automatically, reconnects with backoff and
 shows a status LED (`LIVE` / `SIM` / `CONNECTING` / `NO SIGNAL`). **DEMO** mode
@@ -237,10 +283,10 @@ every change, including the physical BOOT button) — not in the telemetry strea
 
 Telemetry is pushed at ~15 Hz:
 
-`type, ver, proto, volt, cellV, cells, minV, cellMin, cellv[], curr, peakI, pwr,
-peakW, mah, rpm, escT, motT, alt, maxAlt, vspd, spd, maxSpd, hdg, roll, pitch, lat,
-lon, gpsAlt, sats, gpsFix, rssi, fps, crcErr, lastApp, lastPhy, attSrc, hdgSrc,
-master, polls, busMode, heap, uptime`
+`type, ver, proto, volt, cellV, cells, minV, cellMin, cellv[], sagCell, sagPack,
+restCell, resMohm, curr, peakI, pwr, peakW, mah, rpm, escT, motT, alt, maxAlt, vspd,
+spd, maxSpd, hdg, roll, pitch, lat, lon, gpsAlt, sats, gpsFix, rssi, fps, crcErr,
+lastApp, lastPhy, attSrc, hdgSrc, master, polls, pollsSec, busMode, heap, uptime`
 
 Commands (browser → ESP32):
 
@@ -289,4 +335,12 @@ data/index.html         # Single-file cockpit dashboard (no external assets)
 
 - [openXsensor](https://github.com/openXsensor/openXsensor) — S.Port frame layout,
   ACC-slot attitude mapping and cell/GPS encodings were verified against its source.
+- [gripen-HUD-for-ETHOS-X12S](https://github.com/guerradr/gripen-HUD-for-ETHOS-X12S) —
+  the A1 Gripen HUD symbology (same author).
 - FrSky S.Port protocol documentation & community reverse-engineering.
+
+## License
+
+This project is licensed under the **GNU General Public License v3.0** — see
+[LICENSE](LICENSE). The GPLv3 applies because the A1 instrument ports symbology and
+code structure from the author's GPLv3 Gripen HUD widget.

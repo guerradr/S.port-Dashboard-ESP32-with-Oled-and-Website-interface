@@ -12,7 +12,7 @@
 #include "SportParser.h"
 #include "FutureParsers.h"
 
-#define FW_VERSION "2.1.0"
+#define FW_VERSION "2.2.0"
 
 #ifdef BOARD_LOLIN_C3_PICO
 constexpr int PIN_OLED_SDA = 8;
@@ -252,6 +252,10 @@ void pushTelemetryWs() {
     doc["cells"] = telem.detectedCells;
     doc["minV"] = telem.minVoltage;
     doc["cellMin"] = telem.minCellV;
+    doc["sagCell"] = telem.sagCellV;
+    doc["sagPack"] = telem.sagPackV;
+    doc["resMohm"] = telem.resMohm;
+    doc["restCell"] = telem.restCellV;
     if (cellsFresh) {
         JsonArray arr = doc["cellv"].to<JsonArray>();
         for (uint8_t i = 0; i < telem.cellCount && i < MAX_CELLS; i++) {
@@ -292,6 +296,7 @@ void pushTelemetryWs() {
     doc["hdgSrc"] = headingSrc(telem);
     doc["master"] = telem.busMasterActive;
     doc["polls"] = telem.pollsSent;
+    doc["pollsSec"] = telem.pollsPerSec;
     doc["busMode"] = config.busMode;
     doc["heap"] = ESP.getFreeHeap();
     doc["uptime"] = now / 1000;
