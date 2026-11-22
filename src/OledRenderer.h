@@ -203,8 +203,8 @@ private:
         float cr = cosf(roll), sr = sinf(roll);
         const float pxd = 1.35f;
 
-        auto px = [&](float u, float v) -> int { return (int)(cx + u * cr - v * sr); };
-        auto py = [&](float u, float v) -> int { return (int)(cy + u * sr + v * cr); };
+        auto px = [&](float u, float v) -> int { return (int)(cx + u * cr + v * sr); };
+        auto py = [&](float u, float v) -> int { return (int)(cy - u * sr + v * cr); };
 
         // Pitch ladder (every 5 deg, longer every 10 deg).
         for (int deg = -30; deg <= 30; deg += 5) {
@@ -262,8 +262,8 @@ private:
         float cr = cosf(roll), sr = sinf(roll);
         const float pxd = 0.95f;
 
-        auto px = [&](float u, float v) -> int { return (int)(cx + u * cr - v * sr); };
-        auto py = [&](float u, float v) -> int { return (int)(cy + u * sr + v * cr); };
+        auto px = [&](float u, float v) -> int { return (int)(cx + u * cr + v * sr); };
+        auto py = [&](float u, float v) -> int { return (int)(cy - u * sr + v * cr); };
 
         // Horizon with a center gap (Gripen style).
         float v0 = pitch * pxd;
@@ -451,6 +451,9 @@ private:
 
 public:
     OledRenderer() : _display(128, 64, &Wire, -1) {}
+
+    // Raw 1 KB SSD1306 framebuffer (for the pixel-exact web mirror).
+    const uint8_t* buffer() { return _display.getBuffer(); }
 
     bool begin(int sdaPin, int sclPin) {
         Wire.begin(sdaPin, sclPin);

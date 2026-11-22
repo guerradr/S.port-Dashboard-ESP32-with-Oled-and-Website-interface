@@ -36,11 +36,10 @@ static constexpr uint16_t APPID_RPM_FIRST   = 0x0500;
 static constexpr uint16_t APPID_ACCX        = 0x0700;  // openXsensor ACC slot X
 static constexpr uint16_t APPID_ACCY        = 0x0710;  // openXsensor ACC slot Y
 static constexpr uint16_t APPID_ACCZ        = 0x0720;  // openXsensor ACC slot Z
-static constexpr uint16_t APPID_GPS_LAT     = 0x0800;
-static constexpr uint16_t APPID_GPS_LON     = 0x0820;
+static constexpr uint16_t APPID_GPS_LAT     = 0x0800;  // lat OR lon (bit31 = lon)
+static constexpr uint16_t APPID_GPS_ALT     = 0x0820;  // GPS altitude (cm)
 static constexpr uint16_t APPID_GPS_SPEED   = 0x0830;
 static constexpr uint16_t APPID_GPS_COURSE  = 0x0840;
-static constexpr uint16_t APPID_GPS_ALT     = 0x0850;
 static constexpr uint16_t APPID_RSSI        = 0xF101;
 
 // Physical sensor IDs polled by FrSky receivers (source: openXsensor docs).
@@ -170,18 +169,20 @@ private:
             d.accLastMs[2] = millis();
             d.activeSensorMask |= (1 << 9);
         } else if (baseId == APPID_GPS_LAT) {
+            // FrSky GPS: latitude and longitude share app ID 0x0800 and
+            // alternate. Bit 31 set = longitude, bit 30 = negative.
             uint32_t raw = (uint32_t)val;
-            float lat = (float)(raw & 0x3FFFFFFF) / 600000.0f;
-            if (raw & 0x40000000) lat = -lat;
-            d.gpsLat = lat;
+            float coord = (float)(raw & 0x3FFFFFFF) / 600000.0f;
+            if (raw & 0x40000000) coord = -coord;
+            if (raw & 0x80000000) {
+                d.gpsLon = coord;
+            } else {
+                d.gpsLat = coord;
+            }
             d.gpsPosLastMs = millis();
             d.activeSensorMask |= (1 << 11);
-        } else if (baseId == APPID_GPS_LON) {
-            uint32_t raw = (uint32_t)val;
-            float lon = (float)(raw & 0x3FFFFFFF) / 600000.0f;
-            if (raw & 0x40000000) lon = -lon;
-            d.gpsLon = lon;
-            d.gpsPosLastMs = millis();
+        } else if (baseId == APPID_GPS_ALT) {
+            d.gpsAlt = val / 100.0f;  // oXs sends cm
             d.activeSensorMask |= (1 << 11);
         } else if (baseId == APPID_GPS_SPEED) {
             d.speedRaw = (float)(uint32_t)val;
@@ -190,9 +191,6 @@ private:
             d.heading = val / 100.0f;
             d.hdgGpsMs = millis();
             d.activeSensorMask |= (1 << 7);
-        } else if (baseId == APPID_GPS_ALT) {
-            d.gpsAlt = val / 100.0f;
-            d.activeSensorMask |= (1 << 11);
         } else if (appId == APPID_RSSI) {
             d.rssi = (int)(val & 0xFF);
             d.activeSensorMask |= (1 << 8);

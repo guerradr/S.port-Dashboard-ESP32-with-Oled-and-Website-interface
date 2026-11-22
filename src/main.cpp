@@ -12,7 +12,7 @@
 #include "SportParser.h"
 #include "FutureParsers.h"
 
-#define FW_VERSION "2.2.0"
+#define FW_VERSION "2.2.1"
 
 #ifdef BOARD_LOLIN_C3_PICO
 constexpr int PIN_OLED_SDA = 8;
@@ -53,6 +53,7 @@ DNSServer dnsServer;
 unsigned long lastLoopMs = 0;
 unsigned long lastWsPushMs = 0;
 unsigned long lastOledMs = 0;
+unsigned long lastOledSendMs = 0;
 
 // OLED test pattern state (255 = off)
 uint8_t oledTestMode = 255;
@@ -84,6 +85,8 @@ void saveConfig() {
     prefs.putUChar("busMode", config.busMode);
     prefs.putUChar("gpsUnit", config.gpsUnit);
     prefs.putUChar("attSmooth", config.attSmooth);
+    prefs.putUChar("stallSpd", config.stallSpd);
+    prefs.putUShort("minAlt", config.minAlt);
     prefs.end();
 }
 
@@ -111,6 +114,8 @@ void loadConfig() {
     if (config.gpsUnit > 1) config.gpsUnit = 0;
     config.attSmooth = prefs.getUChar("attSmooth", 70);
     if (config.attSmooth > 95) config.attSmooth = 70;
+    config.stallSpd = prefs.getUChar("stallSpd", 35);
+    config.minAlt = prefs.getUShort("minAlt", 30);
     prefs.end();
 
     if ((uint8_t)config.oledPreset >= OLED_PRESET_COUNT) {
@@ -226,6 +231,8 @@ void pushConfig(AsyncWebSocketClient* client) {
     doc["busMode"] = config.busMode;
     doc["gpsUnit"] = config.gpsUnit;
     doc["attSmooth"] = config.attSmooth;
+    doc["stallSpd"] = config.stallSpd;
+    doc["minAlt"] = config.minAlt;
     doc["heap"] = ESP.getFreeHeap();
     doc["uptime"] = millis() / 1000;
 
@@ -365,6 +372,12 @@ void handleWsMessage(AsyncWebSocketClient* client, void* arg, uint8_t* data, siz
         if (doc["attSmooth"].is<int>()) {
             config.attSmooth = (uint8_t)constrain(doc["attSmooth"].as<int>(), 0, 95);
         }
+        if (doc["stallSpd"].is<int>()) {
+            config.stallSpd = (uint8_t)constrain(doc["stallSpd"].as<int>(), 10, 150);
+        }
+        if (doc["minAlt"].is<int>()) {
+            config.minAlt = (uint16_t)constrain(doc["minAlt"].as<int>(), 0, 1000);
+        }
         saveConfig();
         pushConfig(nullptr);  // keep every connected client in sync
     } else if (strcmp(cmd, "resetPeaks") == 0) {
@@ -492,11 +505,13 @@ void loop() {
 
     // ---- OLED: dirty-flag rendering at max 10 fps -------------------------
     if (now - lastOledMs >= 100) {
+        bool rendered = false;
         if (oledTestMode != 255) {
             if (oledTestMode != lastTestPattern || now - lastOledMs >= 1000) {
                 oled.renderTestPattern(oledTestMode);
                 lastTestPattern = oledTestMode;
                 lastOledMs = now;
+                rendered = true;
             }
         } else if (telem.framesDecoded != lastRenderedFrames ||
                    (uint8_t)config.oledPreset != lastRenderedPreset ||
@@ -505,6 +520,13 @@ void loop() {
             lastRenderedFrames = telem.framesDecoded;
             lastRenderedPreset = (uint8_t)config.oledPreset;
             lastOledMs = now;
+            rendered = true;
+        }
+
+        // Stream the real framebuffer for a pixel-exact web mirror (~4 fps).
+        if (rendered && ws.count() > 0 && (now - lastOledSendMs) >= 250) {
+            ws.binaryAll(oled.buffer(), 1024);
+            lastOledSendMs = now;
         }
     }
 

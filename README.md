@@ -1,4 +1,4 @@
-# ESP32 Telemetry Multitool — v2.2.0 “Instruments”
+# ESP32 Telemetry Multitool — v2.2.1 “Instruments”
 
 A direct-connect RC telemetry reader, 128×64 OLED HUD and live engineering web
 dashboard for the **ESP-WROOM-32 (`esp32dev`)** (and optionally **LOLIN C3 Pico**)
@@ -12,22 +12,19 @@ bank scale and heading tape.
 
 ---
 
-## What’s new in v2.2.0 — “Instruments”
+## What’s new in v2.2.1
 
 | Area | Highlights |
 | --- | --- |
-| **Theme instruments** | Every theme now has its own instrument, not just a palette: **A1 Gripen HUD** (ported from the Gripen ETHOS widget: zenith/nadir ladder, cardinal crosses, FPV, dot dials), **A2 PFD** with chevroned negative ladder + tapes, **A3 G1000** (ADI + HSI rose), **B Audi-style cluster** (speedo/kW/amps + bars, no attitude), **C marine console** (compass rose + stern heel + side pitch). |
-| **OLED preset 4 follows the theme** | The monochrome attitude preset mirrors the selected theme: jet HUD, ADI ladder, speedo or compass/heel. |
-| **Inverted flight** | With the oXs aviation-convention patch (below), bank spans ±180° and inverted flight reads correctly; the dashboard's roll filter is now wrap-aware across ±180°. |
-| **Voltage restoration** | Pack voltage falls back to the sum of FLVSS cells when no VFAS frames are present; cells/pack now display from a real voltage sensor alone. |
-| **Voltage sag & internal resistance** | Rest-voltage tracking → sag (cell + pack) and estimated pack resistance in mΩ; shown on the EDF tab and as `SAG` on the OLED EDF preset. |
-| **Bench diagnostics & stability** | Polls/s + responses/s on the Bus tab, 40 ms listen-window debounce, half-open WebSocket auto-recovery, guarded render loop, selectable logger capacity (20k/50k rows). |
-| **Docs** | oXs attitude patch, bench wiring for multi-sensor buses, theme gallery; repository relicensed **GPLv3** (the Gripen HUD port requires it). |
+| **GPS fixed** | Latitude/longitude now decode per the real FrSky convention: both share app ID `0x0800`, longitude marked by bit 31, sign in bit 30; `0x0820` is GPS altitude; `0x0850` is UTC date/time (ignored). The map and coordinates show the true position. |
+| **All displays agree** | The OLED mini-ADI rotated the horizon opposite to the web ADI (mirrored tilt). All displays now use the standard convention (bank right → horizon right side up), so the invert switches flip everything together. |
+| **True OLED mirror** | The ESP32 streams its real 1024-byte framebuffer over the WebSocket (~4 fps, binary); the web mirror is pixel-exact — fonts, layouts, themes, flip, even the test patterns. The JS replica is only the DEMO fallback. |
+| **Faithful Gripen HUD** | Ten-dot dials ported exactly from the author's Lua widget (modulo-100 pointer, sub-text below, edge positions), the sliding compass tape, and the STALL SPEED / PULL UP alert banner with configurable thresholds. |
+| **Bench-bus guidance** | Decision tree for real sensors on the bench bus: resistor swap first, 2N7000 driver stage if needed (schematic below). |
 
-### Previous milestones
+### v2.2.0 — Instruments
 
-- **v2.1.0 Field Kit** — GPS/Map tab (offline track plot), GPX export, FreeRTOS bench polling, theme sync fix, attitude smoothing.
-- **v2.0.0 Cockpit Edition** — PFD horizon, oXs ACC/cells/GPS decode, bench master mode, OLED redesign, ESP32Async 3.6.x.
+Theme-specific instruments (Gripen HUD / PFD / G1000+HSI / automotive / marine), OLED preset 4 following the theme, voltage sag + internal resistance, inverted-flight support, WebSocket recovery, logger capacity.
 
 See [CHANGELOG.md](CHANGELOG.md) for the full list.
 
@@ -79,7 +76,7 @@ The ESP32 expects the **openXsensor S.Port output** (physical sensor IDs 0x00, 0
 | Temperatures | `0x0400` / `0x0410` | ESC / motor temperature |
 | RPM | `0x0500` | RPM |
 | **ACC slots** | **`0x0700/0x0710/0x0720`** | **Pitch / roll / yaw (0.1°)** |
-| GPS | `0x0800/0x0820/0x0830/0x0840/0x0850` | Position, speed, course, GPS altitude |
+| GPS | `0x0800` (lat **and** lon, bit31 = lon), `0x0820` alt, `0x0830` speed, `0x0840` course | Position, speed, course, GPS altitude (`0x0850` = UTC date/time, ignored) |
 | Receiver link | `0xF101` | RSSI |
 
 Notes:
@@ -169,12 +166,25 @@ On the bench: power the oXs from a 5 V source (no receiver rail), connect
 oXs signal + ESP32 tap to the same S.Port wire. RSSI will read 0/– and the UI shows
 **BENCH MASTER** — expected, as there is no link.
 
-> **Bench bus with a real sensor (FLVSS etc.):** the receiver drives the S.Port line
-> with a strong push-pull stage; the ESP32 master drives it through the GPIO17 series
-> resistor. If adding a real FrSky sensor drops the frame rate, reduce that resistor
-> from **4.7 kΩ to 1 kΩ** — or fit a proper single-wire driver. The Bus & Logger tab
-> shows polls/s and responses/s to diagnose this: CRC climbing = bus contention,
-> responses near zero = weak drive.
+> **Bench bus with a real sensor (FLVSS, current sensor…):** the receiver drives the
+> S.Port line with a strong push-pull stage; the ESP32 master drives it through the
+> GPIO17 series resistor. Adding a real sensor loads the line and can collapse the
+> frame rate (polls ≈100/s but responses near zero on the Bus tab). Fix order:
+>
+> 1. **Quick test:** replace the 4.7 kΩ series resistor with **470 Ω – 1 kΩ**.
+> 2. **Robust fix:** add a single-wire driver — 2N7000 open-drain stage:
+>
+> ```
+> GPIO17 ──[ 470Ω ]──┬── Gate (2N7000)
+>                    │
+>                  [10kΩ]  pull-up to S.Port V+ (5V)
+>                    │
+> S.Port ────────────┴── Drain (2N7000), Source → GND
+> ```
+>
+>    The MOSFET inverts the GPIO signal (S.Port is inverted UART), the pull-up
+>    matches a receiver's line levels, and the drain only ever pulls the line low —
+>    no contention with sensors' own drivers.
 
 ### Voltage sources
 
@@ -230,7 +240,7 @@ is absent.
 
 | Theme | Instrument |
 | --- | --- |
-| **A1 — Fighter Jet HUD** | Gripen-style HUD ported from the author's ETHOS widget: hemispherical pitch ladder (solid zenith circles, dashed nadir circles with cardinal triangles), N/E/S/W crosses at both poles, boresight ghost, live flight-path vector, F-22 dot dials for speed/altitude. |
+| **A1 — Fighter Jet HUD** | Gripen-style HUD ported from the author's ETHOS widget: hemispherical pitch ladder (solid zenith circles, dashed nadir circles with cardinal triangles), N/E/S/W crosses at both poles, boresight ghost, live flight-path vector, sliding compass tape, ten-dot speed/altitude dials (modulo-100 pointer, sub-text below), and blinking STALL SPEED / PULL UP alerts with configurable thresholds. |
 | **A2 — Airliner PFD** | Filled attitude ball, pitch ladder with negative-pitch chevrons, ±60° bank scale, speed/altitude tapes, heading tape. |
 | **A3 — GA / G1000** | Garmin-style PFD: attitude ball + tapes and a rotating **HSI compass rose** with cardinal/decade labels. |
 | **B — Automotive cluster** | No attitude ball: central needle speedometer, kW and amp gauges, battery/ESC/motor bars, compass strip. |
@@ -271,11 +281,12 @@ The UI speaks JSON over `ws://<ip>/ws`.
 On connect the ESP32 pushes a **config** frame:
 
 ```json
-{"type":"cfg","ver":"2.1.0","ssid":"SPort-HUD","ip":"192.168.4.1",
+{"type":"cfg","ver":"2.2.1","ssid":"SPort-HUD","ip":"192.168.4.1",
  "theme":"A1","preset":0,"protocol":0,"cells":0,"flipOled":false,
  "oledSlots":["VOLT","CURR","ALT","SPD"],"attMap":[1,2,3],
  "invPitch":false,"invRoll":false,"invYaw":false,
- "busMode":0,"gpsUnit":0,"attSmooth":70,"heap":214000,"uptime":42}
+ "busMode":0,"gpsUnit":0,"attSmooth":70,"stallSpd":35,"minAlt":30,
+ "heap":214000,"uptime":42}
 ```
 
 Theme and preset travel **only** in this config frame (pushed on connect and after
@@ -293,7 +304,8 @@ Commands (browser → ESP32):
 ```json
 {"cmd":"setConfig","theme":"A2","protocol":0,"cells":0,"gpsUnit":0,"busMode":0,
  "flipOled":false,"oledSlots":["VOLT","CURR","ALT","SPD"],"attMap":[1,2,3],
- "invPitch":false,"invRoll":false,"invYaw":false,"attSmooth":70}
+ "invPitch":false,"invRoll":false,"invYaw":false,"attSmooth":70,
+ "stallSpd":35,"minAlt":30}
 {"cmd":"resetPeaks"}
 {"cmd":"oledTest","pattern":0}
 {"cmd":"getCfg"}

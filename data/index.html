@@ -274,7 +274,7 @@
       </div>
 
       <div class="card oled-box">
-        <h3>Live 128×64 OLED Mirror <span class="r"><span class="badge" id="presetBadge">INFO</span></span></h3>
+        <h3>Live 128×64 OLED Mirror <span class="r"><span class="badge" id="mirrorBadge">SIM</span> <span class="badge" id="presetBadge">INFO</span></span></h3>
         <canvas id="oledCanvas" width="384" height="192" aria-label="OLED mirror"></canvas>
         <div class="controls">
           <button class="preset-btn active" data-preset="0">1 · Info</button>
@@ -467,6 +467,14 @@
           <span><input type="range" id="attSmooth" min="0" max="95" step="5" value="70" style="width:110px;vertical-align:middle;accent-color:var(--accent);">
           <span id="attSmoothVal" class="mono">70 %</span></span>
         </div>
+        <div class="row">
+          <label for="stallSpd">Jet HUD stall warning (km/h)</label>
+          <input type="number" id="stallSpd" min="10" max="150" value="35" style="width:80px;">
+        </div>
+        <div class="row">
+          <label for="minAlt">Jet HUD low-alt warning (m)</label>
+          <input type="number" id="minAlt" min="0" max="1000" value="30" style="width:80px;">
+        </div>
         <div class="hint" style="color:var(--muted);font-size:11px;margin-top:6px;">
           Default matches the recommended oXs setup: <span class="mono">#define ACCX_SOURCE PITCH</span>,
           <span class="mono">ACCY_SOURCE ROLL</span>, <span class="mono">ACCZ_SOURCE YAW</span> (0.1° units).
@@ -487,7 +495,7 @@
 </main>
 
 <footer>
-  <span>FW <b id="footVer">v2.2.0</b></span>
+  <span>FW <b id="footVer">v2.2.1</b></span>
   <span>AP <b id="footIp">192.168.4.1</b></span>
   <span>Uptime <b id="footUp">--</b></span>
   <span>Heap <b id="footHeap">--</b></span>
@@ -520,7 +528,7 @@ const state = {
   status: "connecting",
   logger: { on: false, rows: [], max: 20000, last: 0, interval: 200 },
   d: {
-    ver: "2.2.0", proto: "FrSky S.Port", theme: "A1", preset: 0,
+    ver: "2.2.1", proto: "FrSky S.Port", theme: "A1", preset: 0,
     volt: 0, cellV: 0, cells: 6, minV: 0, cellMin: 0, cellv: null,
     sagCell: 0, sagPack: 0, resMohm: 0, restCell: 0,
     curr: 0, peakI: 0, pwr: 0, peakW: 0, mah: 0, rpm: 0, escT: 0, motT: 0,
@@ -571,11 +579,16 @@ function connectWs() {
     return;
   }
   state.ws = socket;
+  socket.binaryType = "arraybuffer";
   socket.onopen = () => {
     state.wsRetry = 0;
     setStatus(state.demo ? "sim" : "live");
   };
   socket.onmessage = (ev) => {
+    if (ev.data instanceof ArrayBuffer) {
+      applyOledFrame(new Uint8Array(ev.data));
+      return;
+    }
     let msg;
     try { msg = JSON.parse(ev.data); } catch (e) { return; }
     if (msg.type === "cfg") {
@@ -651,6 +664,8 @@ function applyCfg(m) {
     $("#attSmooth").value = m.attSmooth;
     $("#attSmoothVal").textContent = m.attSmooth + " %";
   }
+  if (typeof m.stallSpd === "number") $("#stallSpd").value = m.stallSpd;
+  if (typeof m.minAlt === "number") $("#minAlt").value = m.minAlt;
   if (m.ip) {
     $("#fwIp").textContent = m.ip;
     $("#footIp").textContent = m.ip;
@@ -756,7 +771,9 @@ $("#saveCfgBtn").addEventListener("click", () => {
     invPitch: $("#invPitch").checked,
     invRoll: $("#invRoll").checked,
     invYaw: $("#invYaw").checked,
-    attSmooth: Number($("#attSmooth").value)
+    attSmooth: Number($("#attSmooth").value),
+    stallSpd: Number($("#stallSpd").value),
+    minAlt: Number($("#minAlt").value)
   });
   toast(ok ? "Settings saved to ESP32" : "Not connected — apply locally only",
         ok ? "ok" : "warn");
@@ -1274,54 +1291,117 @@ function drawGripen(ctx, W, H, d, C) {
   ctx.stroke();
   ctx.globalAlpha = 1;
 
-  ctx.textAlign = "left";
-  ctx.font = "600 11px ui-monospace, monospace";
-  ctx.fillText("HDG " + String(Math.round(((adi.hdg + 360) % 360))).padStart(3, "0"), 14, 20);
-  ctx.textAlign = "right";
-  ctx.fillText("GRIPEN", W - 14, 20);
   ctx.restore();
 
-  // F-22 style dot dials for speed and altitude.
-  const dialR = Math.min(W, H) * 0.088;
-  drawDotDial(ctx, W * 0.14, H * 0.60, dialR, d.spd || 0,
-              Math.max(120, Math.ceil((d.maxSpd || d.spd || 0) / 40) * 40), "km/h", C);
-  drawDotDial(ctx, W * 0.86, H * 0.60, dialR, d.alt || 0,
-              Math.max(200, Math.ceil((d.maxAlt || d.alt || 0) / 100) * 100), "m", C);
+  // Sliding compass tape (Gripen HUD top strip).
+  drawHudCompassTape(ctx, cx, 2, Math.min(W * 0.5, 280), adi.hdg, C);
+
+  // Ten-dot dials, ported from the author's Gripen Lua widget.
+  const dialR = Math.max(26, Math.min(W, H) * 0.065);
+  drawDial(ctx, W * 0.09, cy, dialR, d.spd || 0, String(Math.round(d.spd || 0)), "KM/H", C);
+  drawDial(ctx, W * 0.91, cy, dialR, d.alt || 0, String(Math.round(d.alt || 0)),
+           `${(d.vspd || 0) >= 0 ? "+" : ""}${(d.vspd || 0).toFixed(1)}m/s`, C);
+
+  // Gripen alert banner (STALL SPEED / PULL UP).
+  const alertMsg = jetAlertMessage(d);
+  if (alertMsg) {
+    ctx.save();
+    const blink = 0.55 + 0.45 * Math.sin(performance.now() / 180);
+    ctx.globalAlpha = blink;
+    ctx.font = "700 16px ui-monospace, monospace";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    const tw = ctx.measureText(alertMsg).width;
+    ctx.fillStyle = "rgba(0,0,0,0.6)";
+    ctx.fillRect(cx - tw / 2 - 12, H * 0.30 - 15, tw + 24, 30);
+    ctx.fillStyle = C.danger;
+    ctx.fillText(alertMsg, cx, H * 0.30);
+    ctx.restore();
+  }
 }
 
-function drawDotDial(ctx, x, y, r, value, max, unit, C) {
-  ctx.save();
-  ctx.globalAlpha = 0.35;
-  ctx.fillStyle = C.panel;
-  ctx.beginPath(); ctx.arc(x, y, r + 6, 0, Math.PI * 2); ctx.fill();
-  ctx.globalAlpha = 1;
-  ctx.strokeStyle = C.accent;
-  ctx.lineWidth = 1.2;
-  ctx.beginPath(); ctx.arc(x, y, r + 6, 0, Math.PI * 2); ctx.stroke();
+function jetAlertMessage(d) {
+  const spd = d.spd || 0;
+  const alt = d.alt || 0;
+  const stall = Number(state.cfg && state.cfg.stallSpd != null ? state.cfg.stallSpd : 35);
+  const minAlt = Number(state.cfg && state.cfg.minAlt != null ? state.cfg.minAlt : 30);
+  if (spd > 5 && spd < stall) return "STALL SPEED";
+  if (alt < minAlt && spd > 15) return "PULL UP / LOW ALT";
+  return null;
+}
 
-  const start = (Math.PI * 3) / 4;
-  const sweep = Math.PI * 1.5;
-  const frac = Math.max(0, Math.min(1, value / max));
+function drawHudCompassTape(ctx, cx, top, width, yaw, C) {
+  const halfW = width / 2;
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(cx - halfW, top, width, 28);
+  ctx.clip();
+  ctx.strokeStyle = C.accent;
   ctx.fillStyle = C.accent;
-  for (let i = 0; i <= 20; i++) {
-    const a = start + (i / 20) * sweep;
-    const on = i / 20 <= frac;
-    const rr = i % 5 === 0 ? r * 0.80 : r * 0.88;
-    ctx.globalAlpha = on ? 1 : 0.28;
+  ctx.font = "9px ui-monospace, monospace";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "top";
+  const centerDeg = Math.floor(yaw);
+  for (let deg = centerDeg - 50; deg <= centerDeg + 50; deg++) {
+    if (deg % 5 !== 0) continue;
+    const x = cx + (deg - yaw) * 2.2;
+    const norm = ((deg % 360) + 360) % 360;
+    if (deg % 15 === 0) {
+      ctx.beginPath();
+      ctx.moveTo(x, top + 15); ctx.lineTo(x, top + 20);
+      ctx.stroke();
+      let lbl = String(Math.floor(norm / 10)).padStart(2, "0");
+      if (norm === 0) lbl = "N";
+      ctx.fillText(lbl, x, top + 3);
+    } else {
+      ctx.beginPath();
+      ctx.moveTo(x, top + 17); ctx.lineTo(x, top + 20);
+      ctx.stroke();
+    }
+  }
+  ctx.beginPath();
+  ctx.moveTo(cx, top + 22);
+  ctx.lineTo(cx - 4, top + 28);
+  ctx.lineTo(cx + 4, top + 28);
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawDial(ctx, dcx, dcy, radius, value, mainTxt, subTxt, C) {
+  ctx.save();
+  ctx.globalAlpha = 0.45;
+  ctx.fillStyle = C.panel;
+  ctx.beginPath();
+  ctx.arc(dcx, dcy, radius + 8, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.globalAlpha = 1;
+
+  ctx.fillStyle = C.accent;
+  for (let i = 0; i < 10; i++) {
+    const a = (i / 10) * Math.PI * 2;
     ctx.beginPath();
-    ctx.arc(x + Math.sin(a) * rr, y - Math.cos(a) * rr, i % 5 === 0 ? 2.4 : 1.4,
-            0, Math.PI * 2);
+    ctx.arc(dcx + Math.sin(a) * radius, dcy - Math.cos(a) * radius, 2, 0, Math.PI * 2);
     ctx.fill();
   }
-  ctx.globalAlpha = 1;
+
+  const revFrac = (((value % 100) + 100) % 100) / 100;
+  const ptrAng = revFrac * Math.PI * 2;
+  ctx.strokeStyle = C.accent;
+  ctx.lineWidth = 1.6;
+  ctx.beginPath();
+  ctx.moveTo(dcx + Math.sin(ptrAng) * (radius - 8), dcy - Math.cos(ptrAng) * (radius - 8));
+  ctx.lineTo(dcx + Math.sin(ptrAng) * (radius + 3), dcy - Math.cos(ptrAng) * (radius + 3));
+  ctx.stroke();
+
+  ctx.fillStyle = C.text;
+  ctx.font = "bold 14px ui-monospace, monospace";
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
-  ctx.fillStyle = C.text;
-  ctx.font = `700 ${Math.round(r * 0.48)}px ui-monospace, monospace`;
-  ctx.fillText(String(Math.round(value)), x, y - 3);
+  ctx.fillText(mainTxt, dcx, dcy);
   ctx.fillStyle = C.muted;
-  ctx.font = `600 ${Math.round(r * 0.24)}px ui-monospace, monospace`;
-  ctx.fillText(unit, x, y + r * 0.46);
+  ctx.font = "9px ui-monospace, monospace";
+  ctx.fillText(subTxt, dcx, dcy + radius + 11);
   ctx.restore();
 }
 
@@ -1839,9 +1919,54 @@ function oledVal(slot, d) {
   }
 }
 
+const mirror = { frame: null, lastMs: 0, offscreen: null, ctx: null, imgData: null };
+
+function applyOledFrame(bytes) {
+  if (bytes.length !== 1024) return;
+  if (!mirror.offscreen) {
+    mirror.offscreen = document.createElement("canvas");
+    mirror.offscreen.width = 128;
+    mirror.offscreen.height = 64;
+    mirror.ctx = mirror.offscreen.getContext("2d");
+    mirror.imgData = mirror.ctx.createImageData(128, 64);
+  }
+  const px = mirror.imgData.data;
+  for (let page = 0; page < 8; page++) {
+    for (let x = 0; x < 128; x++) {
+      const b = bytes[page * 128 + x];
+      for (let bit = 0; bit < 8; bit++) {
+        const y = page * 8 + bit;
+        const idx = (y * 128 + x) * 4;
+        const on = (b >> bit) & 1;
+        px[idx] = px[idx + 1] = px[idx + 2] = on ? 255 : 0;
+        px[idx + 3] = 255;
+      }
+    }
+  }
+  mirror.ctx.putImageData(mirror.imgData, 0, 0);
+  mirror.frame = mirror.offscreen;
+  mirror.lastMs = performance.now();
+}
+
 function drawOledMirror(d) {
   const cv = $("#oledCanvas");
   const ctx = cv.getContext("2d");
+
+  const liveFB = mirror.frame && !state.demo &&
+                 (performance.now() - mirror.lastMs < 3000);
+  const mb = $("#mirrorBadge");
+  mb.textContent = liveFB ? "LIVE" : "SIM";
+  mb.className = "badge " + (liveFB ? "ok" : "warn");
+
+  if (liveFB) {
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.imageSmoothingEnabled = false;
+    ctx.fillStyle = "#000";
+    ctx.fillRect(0, 0, 384, 192);
+    ctx.drawImage(mirror.frame, 0, 0, 128, 64, 0, 0, 384, 192);
+    return;
+  }
+
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.fillStyle = "#000";
   ctx.fillRect(0, 0, 384, 192);
@@ -1880,14 +2005,14 @@ function drawOledMirror(d) {
     }
   } else if (state.preset === 1) {
     ctx.font = f1;
-    ctx.fillText(`EDF ${d.cells}S   ESC ${Math.round(d.escT)}C`, 0, 0);
+    ctx.fillText(`EDF ${d.cells}S ${Math.round(d.mah)}mAh`, 0, 0);
     ctx.font = f2;
     ctx.fillText(`${Math.round(d.pwr)}W`, 0, 7);
     ctx.font = f1;
     ctx.fillText(`${d.curr.toFixed(1)}A`, 66, 8);
     ctx.fillText(`${d.volt.toFixed(1)}V`, 66, 16);
     ctx.fillText(`RPM ${Math.round(d.rpm)}  MIN ${d.minV.toFixed(1)}V`, 0, 24);
-    ctx.fillText(`PK ${Math.round(d.peakW)}W  MAH ${Math.round(d.mah)}mAh`, 0, 32);
+    ctx.fillText(`SAG ${(d.sagPack || 0).toFixed(2)}V PK ${Math.round(d.peakW)}W`, 0, 32);
     line(0, 40, 128, 40);
     ctx.fillText("ESC", 0, 42);
     ctx.strokeRect(48, 41, 80, 11);
@@ -1934,7 +2059,7 @@ function drawOledMirror(d) {
     const roll = (att ? d.roll : 0) * Math.PI / 180;
     const pitch = att ? d.pitch : 0;
     const cr = Math.cos(roll), sr = Math.sin(roll);
-    const px = (u, v) => cx + u * cr - v * sr;
+    const px = (u, v) => cx + u * cr + v * sr;
     const py2 = (u, v) => cy + u * sr + v * cr;
     const pxd = 1.35;
     ctx.lineWidth = 1;

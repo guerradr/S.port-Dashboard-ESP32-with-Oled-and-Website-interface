@@ -223,6 +223,8 @@ struct SystemConfig {
     uint8_t busMode = (uint8_t)BusMode::AUTO;
     uint8_t gpsUnit = (uint8_t)GpsSpeedUnit::KNOTS;
     uint8_t attSmooth = 70;  // 0 = raw, 100 = heavily smoothed
+    uint8_t stallSpd = 35;   // km/h, jet HUD stall warning
+    uint16_t minAlt = 30;    // m, jet HUD low-altitude warning
 };
 
 // Human readable attitude source for the OLED / web badge.

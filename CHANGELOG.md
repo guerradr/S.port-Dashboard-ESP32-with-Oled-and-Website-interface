@@ -2,6 +2,32 @@
 
 All notable changes to this project are documented here.
 
+## [2.2.1]
+
+### Fixed
+
+- **GPS coordinates**: latitude/longitude now decode per the real FrSky S.Port
+  convention — both alternate on app ID `0x0800` (bit 31 = longitude, bit 30 =
+  sign), `0x0820` is GPS altitude, `0x0850` is UTC date/time and is ignored. This
+  fixes the incorrect longitude (altitude was being shown) and the jumping
+  latitude; the GPS map now plots real positions.
+- **Roll direction consistency**: the OLED mini-ADI rotated the horizon opposite to
+  the web ADI; all displays now use the standard convention, so the invert switches
+  affect both displays identically.
+- **OLED mirror drift**: replaced the JS layout replica with the ESP32's real
+  1 KB SSD1306 framebuffer streamed over the WebSocket (~4 fps binary), rendered
+  pixel-exact in the browser. The JS approximation remains only for DEMO mode.
+- EDF preset mirror updated to the current firmware layout (`mAh` header, `SAG` row).
+
+### Added
+
+- Faithful Gripen HUD port: ten-dot dials match the Lua widget (modulo-100 pointer,
+  sub-text below, edge placement), sliding compass tape, and the blinking
+  STALL SPEED / PULL UP / LOW ALT banner with `stallSpd` / `minAlt` thresholds
+  configurable in Settings and persisted on the ESP32.
+- README: 2N7000 single-wire driver schematic for bench-master operation with real
+  sensors.
+
 ## [2.2.0] — “Instruments”
 
 ### Added
