@@ -2,6 +2,29 @@
 
 All notable changes to this project are documented here.
 
+## [2.3.0] — CYD port
+
+### Added
+
+- **ESP32-2443S028R (Cheap Yellow Display) build target** `[env:cyd]`:
+  ILI9341 320×240 TFT via TFT_eSPI (setup passed as build flags, no library
+  edits), XPT2046 touch on its own SPI bus, RGB status LED.
+- `src/TftRenderer.h` with five pages: Jet HUD (theme-coloured, 10-dot dials,
+  compass tape, alerts), PFD (sky/ground, tapes, bank scale), Drivetrain
+  (V/A/W, cell bars, sag, mΩ, temps), GPS track map (home/trail/rings), and
+  Diagnostics (bus/FPS/polls, touch raw values for calibration).
+- Touch tab bar + BOOT navigation; colour and touch self-test patterns
+  (BOOT long-press or `oledTest` command).
+- `cfg` message now carries `"board": "CYD"`; the web UI shows the board and
+  marks the OLED mirror card as N/A on CYD builds.
+- `docs/CYD_PORT.md`: requirements, pin map, build log, findings, acceptance matrix.
+
+### Changed
+
+- CYD pin map: S.Port **RX2 = GPIO 22**, **TX2 = GPIO 27** (GPIO 16/17 are the
+  onboard RGB LED on the CYD; state pins are unchanged on `esp32dev`).
+- Firmware version 2.3.0.
+
 ## [2.2.1]
 
 ### Fixed

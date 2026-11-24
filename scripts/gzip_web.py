@@ -9,7 +9,7 @@ import os
 # right before the filesystem image is assembled.
 
 
-def gzip_web(*_args):
+def gzip_web(*_args, **_kwargs):
     project_dir = env.subst("$PROJECT_DIR")
     src = os.path.join(project_dir, "data", "index.html")
     dst = src + ".gz"

@@ -8,19 +8,38 @@
 #include <DNSServer.h>
 
 #include "TelemetryBus.h"
+#ifdef BOARD_CYD_2443S028
+#include <TFT_eSPI.h>
+#if __has_include(<XPT2046_Touchscreen.h>)
+#include <XPT2046_Touchscreen.h>
+#else
+#include <XPT2046_Touchscreen_TT.h>
+#endif
+#include "TftRenderer.h"
+#else
 #include "OledRenderer.h"
+#endif
 #include "SportParser.h"
 #include "FutureParsers.h"
 
-#define FW_VERSION "2.2.1"
+#define FW_VERSION "2.3.0"
 
-#ifdef BOARD_LOLIN_C3_PICO
+#if defined(BOARD_LOLIN_C3_PICO)
 constexpr int PIN_OLED_SDA = 8;
 constexpr int PIN_OLED_SCL = 10;
 constexpr int PIN_SPORT_RX = 20;
 constexpr int PIN_SPORT_TX = 21;
 constexpr int PIN_BUTTON   = 9;
 #define TELEM_SERIAL Serial1
+#elif defined(BOARD_CYD_2443S028)
+// ESP32-2443S028R "Cheap Yellow Display"
+constexpr int PIN_SPORT_RX = 22;  // JST P3/CN1, via 1k series
+constexpr int PIN_SPORT_TX = 27;  // JST CN1, via 330R-1k (bench master / MSP)
+constexpr int PIN_BUTTON   = 0;   // BOOT
+#define TELEM_SERIAL Serial2
+constexpr int PIN_LED_R = 4;   // onboard RGB LED, active LOW
+constexpr int PIN_LED_G = 16;
+constexpr int PIN_LED_B = 17;
 #else
 // ESP-WROOM-32 (esp32dev) default pinout
 constexpr int PIN_OLED_SDA = 21;
@@ -37,7 +56,11 @@ const char* AP_PASS = "12345678";
 TelemetryData telem;
 SystemConfig config;
 Preferences prefs;
+#ifdef BOARD_CYD_2443S028
+TftRenderer tftUi;
+#else
 OledRenderer oled;
+#endif
 
 SportParser sportParser;
 MspParser mspParser;
@@ -216,6 +239,11 @@ void pushConfig(AsyncWebSocketClient* client) {
     doc["ver"] = FW_VERSION;
     doc["ssid"] = AP_SSID;
     doc["ip"] = WiFi.softAPIP().toString();
+#ifdef BOARD_CYD_2443S028
+    doc["board"] = "CYD";
+#else
+    doc["board"] = "ESP32";
+#endif
     doc["theme"] = config.webTheme;
     doc["preset"] = (uint8_t)config.oledPreset;
     doc["protocol"] = (uint8_t)config.protocol;
@@ -424,7 +452,17 @@ void setup() {
     LittleFS.begin(true);
     loadConfig();
 
+#ifdef BOARD_CYD_2443S028
+    pinMode(PIN_LED_R, OUTPUT);
+    pinMode(PIN_LED_G, OUTPUT);
+    pinMode(PIN_LED_B, OUTPUT);
+    digitalWrite(PIN_LED_R, HIGH);  // off (active LOW)
+    digitalWrite(PIN_LED_G, HIGH);
+    digitalWrite(PIN_LED_B, HIGH);
+    tftUi.begin();
+#else
     oled.begin(PIN_OLED_SDA, PIN_OLED_SCL);
+#endif
     selectProtocol(config.protocol);
 
     WiFi.mode(WIFI_AP);
@@ -503,6 +541,21 @@ void loop() {
         oledTestMode = 255;
     }
 
+    // ---- Display -----------------------------------------------------------
+#ifdef BOARD_CYD_2443S028
+    if (now - lastOledMs >= 100) {
+        tftUi.update(telem, config, activeParser->name(), FW_VERSION, oledTestMode);
+        lastOledMs = now;
+    }
+    // Status LED: green = receiver link, blue = bench master, red = no signal.
+    {
+        bool link = (telem.packetsPerSec > 0) && !telem.busMasterActive;
+        bool master = telem.busMasterActive;
+        digitalWrite(PIN_LED_G, link ? LOW : HIGH);
+        digitalWrite(PIN_LED_B, master ? LOW : HIGH);
+        digitalWrite(PIN_LED_R, (link || master) ? HIGH : LOW);
+    }
+#else
     // ---- OLED: dirty-flag rendering at max 10 fps -------------------------
     if (now - lastOledMs >= 100) {
         bool rendered = false;
@@ -529,6 +582,7 @@ void loop() {
             lastOledSendMs = now;
         }
     }
+#endif
 
     // ---- WebSocket: ~15 Hz telemetry push ---------------------------------
     if (now - lastWsPushMs >= 66) {

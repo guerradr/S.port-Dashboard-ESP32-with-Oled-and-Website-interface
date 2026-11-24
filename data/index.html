@@ -495,7 +495,7 @@
 </main>
 
 <footer>
-  <span>FW <b id="footVer">v2.2.1</b></span>
+  <span>FW <b id="footVer">v2.3.0</b></span>
   <span>AP <b id="footIp">192.168.4.1</b></span>
   <span>Uptime <b id="footUp">--</b></span>
   <span>Heap <b id="footHeap">--</b></span>
@@ -523,12 +523,13 @@ const state = {
   preset: 0,
   theme: "A1",
   attSmooth: 70,
+  board: "",
   oledSlots: ["VOLT", "CURR", "ALT", "SPD"],
   cfg: null,
   status: "connecting",
   logger: { on: false, rows: [], max: 20000, last: 0, interval: 200 },
   d: {
-    ver: "2.2.1", proto: "FrSky S.Port", theme: "A1", preset: 0,
+    ver: "2.3.0", proto: "FrSky S.Port", theme: "A1", preset: 0,
     volt: 0, cellV: 0, cells: 6, minV: 0, cellMin: 0, cellv: null,
     sagCell: 0, sagPack: 0, resMohm: 0, restCell: 0,
     curr: 0, peakI: 0, pwr: 0, peakW: 0, mah: 0, rpm: 0, escT: 0, motT: 0,
@@ -629,7 +630,8 @@ function sendWs(obj) {
 function applyCfg(m) {
   state.cfg = m;
   if (m.ver) {
-    $("#fwVer").textContent = "v" + m.ver;
+    state.board = m.board || "ESP32";
+    $("#fwVer").textContent = "v" + m.ver + " · " + state.board;
     $("#footVer").textContent = "v" + m.ver;
     $("#footVer").classList.add("mono");
   }
@@ -1951,10 +1953,25 @@ function applyOledFrame(bytes) {
 function drawOledMirror(d) {
   const cv = $("#oledCanvas");
   const ctx = cv.getContext("2d");
+  const mb = $("#mirrorBadge");
+
+  if (state.board === "CYD") {
+    mb.textContent = "N/A";
+    mb.className = "badge warn";
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.fillStyle = "#000";
+    ctx.fillRect(0, 0, 384, 192);
+    ctx.fillStyle = "#8fa2b8";
+    ctx.font = "600 13px ui-monospace, monospace";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText("CYD build — display is the 2.8\" TFT", 192, 86);
+    ctx.fillText("(no OLED mirror on this board)", 192, 110);
+    return;
+  }
 
   const liveFB = mirror.frame && !state.demo &&
                  (performance.now() - mirror.lastMs < 3000);
-  const mb = $("#mirrorBadge");
   mb.textContent = liveFB ? "LIVE" : "SIM";
   mb.className = "badge " + (liveFB ? "ok" : "warn");
 

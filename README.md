@@ -1,4 +1,4 @@
-# ESP32 Telemetry Multitool — v2.2.1 “Instruments”
+# ESP32 Telemetry Multitool — v2.3.0
 
 A direct-connect RC telemetry reader, 128×64 OLED HUD and live engineering web
 dashboard for the **ESP-WROOM-32 (`esp32dev`)** (and optionally **LOLIN C3 Pico**)
@@ -12,7 +12,29 @@ bank scale and heading tape.
 
 ---
 
-## What’s new in v2.2.1
+## What’s new in v2.3.0 — CYD port
+
+| Area | Highlights |
+| --- | --- |
+| **NEW build target** | `[env:cyd]` for the **ESP32-2443S028R “Cheap Yellow Display”**: 2.8″ ILI9341 320×240 color TFT cockpit, XPT2046 touch, RGB status LED. The classic `esp32dev` (OLED) build is unchanged. |
+| **Five TFT pages** | Jet HUD · PFD (sky/ground + tapes) · Drivetrain (V/A/W, cells, sag, mΩ) · GPS map · Diagnostics — touch tab bar + BOOT button, colour/touch self-test. |
+| **Pin changes on CYD** | S.Port RX = **GPIO 22**, TX = **GPIO 27** (GPIO 16/17 drive the onboard RGB LED). |
+
+**CYD quick start**
+
+```bash
+pio run -e cyd --target uploadfs
+pio run -e cyd --target upload
+```
+
+Wiring: S.Port signal → 1 kΩ → **GPIO 22** (JST P3/CN1); bench-master/MSP TX →
+330 Ω–1 kΩ → **GPIO 27** (JST CN1); oXs 5 V from **P1 VIN**, common ground from
+CN1/P3. Status LED: **green** = receiver link, **blue** = bench master, **red** =
+no signal. The external SSD1306 is not used on this board (the web OLED-mirror card
+shows “N/A — display is the TFT”). Full pin map, variant warning and the step log
+live in **[docs/CYD_PORT.md](docs/CYD_PORT.md)**.
+
+### Previous: v2.2.1
 
 | Area | Highlights |
 | --- | --- |
